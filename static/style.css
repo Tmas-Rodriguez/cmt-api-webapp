@@ -1,0 +1,139 @@
+/* ===== Reset & Base ===== */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', Roboto, Arial, sans-serif;
+}
+
+body {
+    background-color: #f5f6fa;
+    color: #333;
+    line-height: 1.5;
+    padding: 20px;
+}
+
+/* ===== Headings ===== */
+h1 {
+    text-align: center;
+    font-size: 2.2rem;
+    color: #222;
+    margin-bottom: 10px;
+}
+
+h2 {
+    font-size: 1.5rem;
+    color: #555;
+    margin: 30px 0 15px;
+}
+
+/* ===== Container & Boxes ===== */
+.container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+
+.box {
+    background-color: #ffffff;
+    border-radius: 12px;
+    padding: 20px 30px;
+    cursor: pointer;
+    min-width: 150px;
+    text-align: center;
+    font-weight: 500;
+    font-size: 1rem;
+    color: #555;
+    border: 2px solid transparent;
+    box-shadow: 0 3px 8px rgba(0,0,0,0.08);
+    transition: all 0.2s ease-in-out;
+}
+
+.box:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 6px 14px rgba(0,0,0,0.12);
+    border-color: #ccc;
+}
+
+.selected {
+    transform: scale(1.03);
+    box-shadow: 0 6px 14px rgba(0,0,0,0.18);
+}
+
+/* ===== Buttons ===== */
+button {
+    background-color: #4a6cf7;
+    color: #fff;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, transform 0.15s ease;
+}
+
+button:hover {
+    background-color: #3e5cdc;
+    transform: translateY(-2px);
+}
+
+button:active {
+    transform: translateY(0);
+}
+
+/* Specific button styles */
+.submit-btn {
+    background-color: #28a745;
+}
+.submit-btn:hover {
+    background-color: #218838;
+}
+
+.validate-btn {
+    background-color: #ffc107;
+    color: #333;
+}
+.validate-btn:hover {
+    background-color: #e0a800;
+}
+
+/* ===== Result & Validate Output Boxes ===== */
+.result-box,
+.validate-box {
+    width: 100%;
+    min-height: 100px;
+    max-height: 350px;   /* Set your preferred max height */
+    overflow-y: auto;    /* Enable vertical scroll when needed */
+    background: #181818;
+    color: #e0e0e0;
+    font-family: "Consolas", "Fira Mono", "Menlo", monospace;
+    padding: 10px;
+    border-radius: 6px;
+    margin-top: 10px;
+    box-sizing: border-box;
+    white-space: pre-wrap;
+}
+
+/* ===== Layout for Submit + Result ===== */
+#sumit-and-result {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 25px;
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 600px) {
+    .container {
+        flex-direction: column;
+        align-items: center;
+    }
+    .box {
+        width: 100%;
+        max-width: 250px;
+    }
+}

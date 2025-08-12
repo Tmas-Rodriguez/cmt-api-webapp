@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>CMT - DB manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>CMT - Data Base Manager</h1>
+    <h2>Bucket Refresh</h2>
+    <div class="container">
+        {% for client in companies %}
+        <div class="box" id="{{ client.id }}" onclick="selectBox('{{ client.id }}')">
+            {{ client.name }}
+        </div>
+        {% endfor %}
+    </div>
+
+    <div id="sumit-and-result">
+        <button class="submit-btn" onclick="sendSelection()">Refresh</button>
+
+        <div id="result" class="result-box"></div>
+    </div>
+
+    <h2>Validate CSV files</h2>
+    <button class="validate-btn" onclick="startGeraStream()">Validate Button</button>
+    <div id="validate" class="validate-box"></div>
+
+    <script>
+        let selectedId = null;
+
+        const colors = {
+            "box1": "#c44c4c", // Santander soft red
+            "box2": "#343a40", // Grupo Petersen charcoal
+            "box3": "#3b5d4c", // Alsea muted dark green
+            "box4": "#4361b3", // La Anónima softer blue
+            "box5": "#868e96"  // ICBC soft gray
+        };
+
+        function selectBox(id) {
+            document.querySelectorAll('.box').forEach(b => {
+                b.classList.remove('selected');
+                b.style.backgroundColor = "";
+                b.style.color = "";
+            });
+
+            const box = document.getElementById(id);
+            box.classList.add('selected');
+            box.style.backgroundColor = colors[id];
+            box.style.color = "#fff";
+            selectedId = id;
+        }
+
+        function sendSelection() {
+            if (!selectedId) {
+                alert("Please select a client first.");
+                return;
+            }
+            fetch("/submit", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({selected_id: selectedId})
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === "success") {
+                    document.getElementById("result").innerText = data.output;
+                } else {
+                    document.getElementById("result").innerText = "Error: " + data.message;
+                }
+            })
+            .catch(err => console.error(err));
+        }
+
+        function startGeraStream() {
+            const validateBox = document.getElementById("validate");
+            validateBox.innerText = "";
+            const eventSource = new EventSource("/stream-gera");
+            eventSource.onmessage = function(event) {
+                validateBox.innerText += event.data + "\n";
+                // Auto-scroll to bottom
+                validateBox.scrollTop = validateBox.scrollHeight;
+            };
+            eventSource.onerror = function() {
+                eventSource.close();
+            };
+        }
+    </script>
+</body>
+</html>
