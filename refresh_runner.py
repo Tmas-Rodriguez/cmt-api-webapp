@@ -1,11 +1,11 @@
 import subprocess
 import os
 
-def run_gera():
+def run_refreshDB(client):
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.Popen(
-        ["python", "-u", "gera.py"],  # <- add -u for unbuffered
+        ["python", "-u", "refreshDB.py"],  # <- add -u for unbuffered
         cwd="C:\\Users\\cmt\\Downloads\\cmt-api-copy\\cmt-api\\EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

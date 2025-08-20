@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, Response
 import subprocess
 from gera_runner import run_gera
+from refresh_runner import run_refreshDB  # Import the refresh_runner function
 
 app = Flask(__name__)
 
@@ -43,6 +44,13 @@ def submit():
 def stream_gera():
     def event_stream():
         for line in run_gera():
+            yield f"data: {line}\n\n"
+    return Response(event_stream(), mimetype="text/event-stream")
+
+@app.route("/stream-refresh")
+def stream_refresh():
+    def event_stream():
+        for line in run_refreshDB():
             yield f"data: {line}\n\n"
     return Response(event_stream(), mimetype="text/event-stream")
 

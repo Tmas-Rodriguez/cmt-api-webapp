@@ -17,8 +17,7 @@
     </div>
 
     <div id="sumit-and-result">
-        <button class="submit-btn" onclick="sendSelection()">Refresh</button>
-
+        <button class="submit-btn" onclick="startRefreshStream()">Refresh</button>
         <div id="result" class="result-box"></div>
     </div>
 
@@ -82,6 +81,23 @@
                 validateBox.scrollTop = validateBox.scrollHeight;
             };
             eventSource.onerror = function() {
+                eventSource.close();
+            };
+
+        }
+
+        function startRefreshStream() {
+            const resultBox = document.getElementById("result");
+            resultBox.innerText = ""; // Clear previous logs
+            const eventSource = new EventSource("/stream-refresh");
+
+            eventSource.onmessage = function(event) {
+                resultBox.innerText += event.data + "\n";
+                resultBox.scrollTop = resultBox.scrollHeight; // Auto-scroll to bottom
+            };
+
+            eventSource.onerror = function() {
+                resultBox.innerText += "\nError: Unable to fetch logs.";
                 eventSource.close();
             };
         }
