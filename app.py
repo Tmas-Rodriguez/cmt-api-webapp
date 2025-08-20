@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, jsonify, Response
 import subprocess
 from gera_runner import run_gera
-from refresh_runner import run_refreshDB  # Import the refresh_runner function
+from refresh_runners.refresh_alsea_runner import run_refresh_alsea
 
 app = Flask(__name__)
 
@@ -49,10 +49,12 @@ def stream_gera():
 
 @app.route("/stream-refresh")
 def stream_refresh():
-    def event_stream():
-        for line in run_refreshDB():
+    client = request.args.get("selectedId")
+    company_name = next((c["name"] for c in companies if c["id"] == client), None)
+    def event_stream(client):
+        for line in run_refresh_alsea(client):
             yield f"data: {line}\n\n"
-    return Response(event_stream(), mimetype="text/event-stream")
+    return Response(event_stream(client), mimetype="text/event-stream")
 
 if __name__ == "__main__":
     app.run(debug=True)

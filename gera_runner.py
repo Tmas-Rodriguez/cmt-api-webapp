@@ -12,7 +12,7 @@ def run_gera():
         text=True,
         bufsize=1,
         env=env,
-        encoding="utf-8"  # <-- Add this line
+        encoding="utf-8"
     )
     for line in process.stdout:
         yield line.rstrip()

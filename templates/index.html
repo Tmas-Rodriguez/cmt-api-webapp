@@ -48,27 +48,9 @@
             box.style.backgroundColor = colors[id];
             box.style.color = "#fff";
             selectedId = id;
-        }
 
-        function sendSelection() {
-            if (!selectedId) {
-                alert("Please select a client first.");
-                return;
-            }
-            fetch("/submit", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({selected_id: selectedId})
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === "success") {
-                    document.getElementById("result").innerText = data.output;
-                } else {
-                    document.getElementById("result").innerText = "Error: " + data.message;
-                }
-            })
-            .catch(err => console.error(err));
+            // Save to localStorage
+            localStorage.setItem("clientId", id);
         }
 
         function startGeraStream() {
@@ -84,23 +66,28 @@
                 eventSource.close();
             };
 
-        }
 
+            }
         function startRefreshStream() {
-            const resultBox = document.getElementById("result");
-            resultBox.innerText = ""; // Clear previous logs
-            const eventSource = new EventSource("/stream-refresh");
-
+            if (!selectedId) {
+                alert("Please select a client first.");
+                return;
+            }
+            else {console.log(selectedId)}
+            const refreshBox = document.getElementById("result");
+            refreshBox.innerText = "";
+            const eventSource = new EventSource("/stream-refresh?selectedId=" + selectedId);
             eventSource.onmessage = function(event) {
-                resultBox.innerText += event.data + "\n";
-                resultBox.scrollTop = resultBox.scrollHeight; // Auto-scroll to bottom
+                refreshBox.innerText += event.data + "\n";
+                // Auto-scroll to bottom
+                refreshBox.scrollTop = refreshBox.scrollHeight;
             };
-
             eventSource.onerror = function() {
-                resultBox.innerText += "\nError: Unable to fetch logs.";
                 eventSource.close();
             };
+
         }
+
     </script>
 </body>
 </html>
