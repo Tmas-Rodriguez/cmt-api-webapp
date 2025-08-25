@@ -4,13 +4,27 @@
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .forbidden {
+            pointer-events: none;
+            cursor: not-allowed !important;
+            opacity: 0.6;
+        }
+        .disabled-btn {
+            pointer-events: none;
+            cursor: not-allowed !important;
+            opacity: 0.6;
+        }
+    </style>
 </head>
 <body>
     <h1>CMT - Data Base Manager</h1>
     <h2>Bucket Refresh</h2>
     <div class="container">
         {% for client in companies %}
-        <div class="box" id="{{ client.id }}" onclick="selectBox('{{ client.id }}')">
+        <div class="box {% if client.name == 'ICBC' %}forbidden{% endif %}" 
+             id="{{ client.id }}"
+             {% if client.name != 'ICBC' %}onclick="selectBox('{{ client.id }}')" {% endif %}>
             {{ client.name }}
         </div>
         {% endfor %}
@@ -22,7 +36,8 @@
     </div>
 
     <h2>Validate CSV files</h2>
-    <button class="validate-btn" onclick="startGeraStream()">Validate Button</button>
+    <button class="validate-btn" onclick="startGeraStream()">Validate</button>
+    <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
     <div id="validate" class="validate-box"></div>
 
     <script>
@@ -56,18 +71,25 @@
         function startGeraStream() {
             const validateBox = document.getElementById("validate");
             validateBox.innerText = "";
+            const uploadBtn = document.getElementById("uploadBtn");
+            uploadBtn.classList.add("disabled-btn");
+            uploadBtn.disabled = true;
+
             const eventSource = new EventSource("/stream-gera");
             eventSource.onmessage = function(event) {
                 validateBox.innerText += event.data + "\n";
-                // Auto-scroll to bottom
                 validateBox.scrollTop = validateBox.scrollHeight;
+
+                // Example: Enable upload if validation passes
+                if (event.data.includes("¡Proceso completado exitosamente!")) {
+                    uploadBtn.classList.remove("disabled-btn");
+                    uploadBtn.disabled = false;
+                }
             };
             eventSource.onerror = function() {
                 eventSource.close();
             };
-
-
-            }
+        }
         function startRefreshStream() {
             if (!selectedId) {
                 alert("Please select a client first.");
