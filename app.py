@@ -1,4 +1,6 @@
-from flask import Flask, render_template, request, jsonify, Response
+from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, flash
+from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+
 import subprocess
 from gera_runner import run_gera
 from refresh_runners.refresh_alsea_runner import run_refresh_alsea
@@ -14,9 +16,51 @@ companies = [
     {"id": "box5", "name": "ICBC"},
 ]
 
+app.secret_key = "supersecret"
+
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = "login"
+
+# Dummy user (replace with DB lookup)
+class User(UserMixin):
+    def __init__(self, id, name, password):
+        self.id = id
+        self.name = name
+        self.password = password
+
+users = {
+    "tomi": User(id="tomi", name="Tomi", password="tomipass"),
+    "marce": User(id="marce", name="Marce", password="marcepass"),
+    "santi": User(id="santi", name="Santi", password="santipass"),
+}
+
+@login_manager.user_loader
+def load_user(user_id):
+    return users.get(user_id)
+
 @app.route("/")
+@login_required
 def index():
     return render_template("index.html", companies=companies)
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+        user = users.get(username)
+        if user and password == user.password:
+            login_user(user)
+            return redirect(url_for("index"))
+        flash("Invalid credentials")
+    return render_template("login.html")
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
 
 @app.route("/submit", methods=["POST"])
 def submit():
