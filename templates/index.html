@@ -90,6 +90,20 @@
                 eventSource.close();
             };
         }
+
+        function startUploadStream() {
+            const validateBox = document.getElementById("validate");
+            validateBox.innerText += "\nStarting upload...\n";
+            const eventSource = new EventSource("/stream-upload");
+            eventSource.onmessage = function(event) {
+                validateBox.innerText += event.data + "\n";
+                validateBox.scrollTop = validateBox.scrollHeight;
+            };
+            eventSource.onerror = function() {
+                eventSource.close();
+            };
+        }
+
         function startRefreshStream() {
             if (!selectedId) {
                 alert("Please select a client first.");

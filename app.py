@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify, Response
 import subprocess
 from gera_runner import run_gera
 from refresh_runners.refresh_alsea_runner import run_refresh_alsea
+from upload_runner import run_upload
 
 app = Flask(__name__)
 
@@ -55,6 +56,13 @@ def stream_refresh():
         for line in run_refresh_alsea(client):
             yield f"data: {line}\n\n"
     return Response(event_stream(client), mimetype="text/event-stream")
+
+@app.route("/stream-upload")
+def stream_upload():
+    def event_stream():
+        for line in run_upload():
+            yield f"data: {line}\n\n"
+    return Response(event_stream(), mimetype="text/event-stream")
 
 if __name__ == "__main__":
     app.run(debug=True)
