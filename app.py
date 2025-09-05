@@ -3,7 +3,7 @@ from flask_login import LoginManager, UserMixin, login_user, login_required, log
 
 import subprocess
 from gera_runner import run_gera
-from refresh_runners.refresh_alsea_runner import run_refresh_alsea
+from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
 
 app = Flask(__name__)
@@ -96,10 +96,10 @@ def stream_gera():
 def stream_refresh():
     client = request.args.get("selectedId")
     company_name = next((c["name"] for c in companies if c["id"] == client), None)
-    def event_stream(client):
-        for line in run_refresh_alsea(client):
+    def event_stream(client, user):
+        for line in run_refresh(client, user):
             yield f"data: {line}\n\n"
-    return Response(event_stream(client), mimetype="text/event-stream")
+    return Response(event_stream(client, current_user.name), mimetype="text/event-stream")
 
 @app.route("/stream-upload")
 def stream_upload():

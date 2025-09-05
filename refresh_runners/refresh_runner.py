@@ -10,10 +10,9 @@ companies = [
     {"id": "box5", "name": "ICBC"},
 ]
 
-def run_refresh_alsea(client):
+def run_refresh(client,user):
 
     company_name = next((c["name"] for c in companies if c["id"] == client), None)
-
     client = client[-1]
 
     yield f"Comenzando Refresh para cliente: {company_name}..."
