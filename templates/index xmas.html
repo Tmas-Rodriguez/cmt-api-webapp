@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
+    <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon xmas.png') }}">
     <style>
         .forbidden {
             pointer-events: none;
@@ -19,8 +19,8 @@
     </style>
 </head>
 <body>
-    <h1>CMT - Data Base Manager</h1>
-    <h2>Bucket Refresh</h2>
+    <h1>🎄 CMT - Data Base Manager 🎄</h1>
+    <h2>❄️ Bucket Refresh ☃️</h2>
     <div class="container">
         {% for client in companies %}
         <div class="box {% if client.name == 'ICBC' %}forbidden{% endif %}" 
@@ -36,7 +36,7 @@
         <div id="result" class="result-box"></div>
     </div>
 
-    <h2>Validate CSV files</h2>
+    <h2>🎁 Validate CSV files 🎅</h2>
     <button class="validate-btn" onclick="startGeraStream()">Validate</button>
     <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
     <div id="validate" class="validate-box"></div>

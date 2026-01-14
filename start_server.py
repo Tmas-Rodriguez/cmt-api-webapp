@@ -3,6 +3,9 @@ import time
 import sys
 import os
 
+# Set the working directory to the script's location
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 def run_process(command, cwd=None):
     """
     Ejecuta un proceso en segundo plano y lo devuelve.
@@ -11,7 +14,7 @@ def run_process(command, cwd=None):
 
 def main():
     # Ruta a tu app Flask
-    flask_cmd = [sys.executable, "-m", "flask", "run", "--host=0.0.0.0", "--port=5000"]
+    flask_cmd = [".\\.venv\\Scripts\\python.exe", "-m", "flask", "run", "--host=0.0.0.0", "--port=5000"]
 
     # Nombre del túnel (el mismo que creaste con cloudflared tunnel create)
     tunnel_name = "miapp"

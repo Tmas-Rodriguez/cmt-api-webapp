@@ -7,7 +7,7 @@ companies = [
     {"id": "box2", "name": "Grupo Petersen"},
     {"id": "box3", "name": "Alsea"},
     {"id": "box4", "name": "La Anónima"},
-    {"id": "box5", "name": "ICBC"},
+    {"id": "box5", "name": "Mostaza"},
 ]
 
 def run_refresh(client,user):
@@ -22,7 +22,7 @@ def run_refresh(client,user):
 
     process = subprocess.Popen(
         [sys.executable, "-u", f"refreshDB_{company_name.lower().replace(" ", "_")}.py"],
-        cwd="C:\\Users\\cmt\\Downloads\\cmt-api-copy\\cmt-api\\EsgCmt-API",
+        cwd="C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,

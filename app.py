@@ -1,3 +1,5 @@
+import os
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, flash
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 
@@ -13,7 +15,7 @@ companies = [
     {"id": "box2", "name": "Grupo Petersen"},
     {"id": "box3", "name": "Alsea"},
     {"id": "box4", "name": "La Anónima"},
-    {"id": "box5", "name": "ICBC"},
+    {"id": "box5", "name": "Mostaza"},
 ]
 
 app.secret_key = "supersecret"

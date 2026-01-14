@@ -6,7 +6,7 @@ def run_upload():
     env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.Popen(
         ["python", "-u", "upload_db.py"],  # <- add -u for unbuffered
-        cwd="C:\\Users\\cmt\\Downloads\\cmt-api-copy\\cmt-api\\EsgCmt-API",
+        cwd="C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
