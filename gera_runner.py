@@ -31,5 +31,5 @@ def run_gera():
     if return_code == 0:
         yield f"__GERA_COMPLETED__:{GERA_OUTPUT_FOLDER}|{start_time}"
     else:
-        yield f"__GERA_ERROR__:{return_code}"
+        yield f"__GERA_ERROR__:{GERA_OUTPUT_FOLDER}|{start_time}|{return_code}"
 

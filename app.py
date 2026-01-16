@@ -121,8 +121,14 @@ def stream_gera():
                     print(f"DEBUG: Gera completed. Output folder: {folder_path}, Start time: {start_time}", flush=True)
                     yield f"data: {{'status': 'completed', 'message': 'Script completed successfully'}}\n\n"
                 elif line.startswith("__GERA_ERROR__:"):
-                    error_code = line.split(":", 1)[1].strip()
-                    print(f"DEBUG: Gera error: {error_code}", flush=True)
+                    # Parse the error signal: folder_path|start_time|error_code
+                    error_info = line.split(":", 1)[1].strip().split("|")
+                    folder_path = error_info[0] if len(error_info) > 0 else None
+                    start_time = float(error_info[1]) if len(error_info) > 1 else None
+                    error_code = error_info[2] if len(error_info) > 2 else "Unknown"
+                    gera_state["output_folder"] = folder_path
+                    gera_state["start_time"] = start_time
+                    print(f"DEBUG: Gera error. Output folder: {folder_path}, Start time: {start_time}, Error code: {error_code}", flush=True)
                     yield f"data: {{'status': 'error', 'message': 'Script failed with code: {error_code}'}}\n\n"
                 else:
                     yield f"data: {line}\n\n"

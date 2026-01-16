@@ -90,8 +90,26 @@
                 const data = event.data;
                 console.log("Received event data:", data);
                 
+                // Check if error detected
+                if (data.includes("🚨 ¡ERROR DETECTADO!:")) {
+                    console.log("Error signal detected!");
+                    // Display as regular log line first
+                    validateBox.innerText += data + "\n";
+                    validateBox.innerText += "\n✗ Error detected! Downloading error files...\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                    eventSource.close();
+                    
+                    // Trigger download after a short delay
+                    setTimeout(function() {
+                        console.log("Triggering error file download...");
+                        downloadGeraFiles();
+                    }, 1000);
+                    
+                    uploadBtn.classList.remove("disabled-btn");
+                    uploadBtn.disabled = false;
+                }
                 // Check if this is a completion signal
-                if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
+                else if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
                     console.log("Completion signal detected!");
                     validateBox.innerText += "\n✓ Validation completed! Starting file download...\n";
                     validateBox.scrollTop = validateBox.scrollHeight;
