@@ -90,8 +90,17 @@
                 const data = event.data;
                 console.log("Received event data:", data);
                 
+                // Check if success message received
+                if (data.includes("🎉 ¡Proceso completado exitosamente!")) {
+                    console.log("Success signal detected!");
+                    validateBox.innerText += data + "\n";
+                    validateBox.innerText += "\n✓ Validation completed successfully! Upload button enabled.\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                    uploadBtn.classList.remove("disabled-btn");
+                    uploadBtn.disabled = false;
+                }
                 // Check if error detected
-                if (data.includes("🚨 ¡ERROR DETECTADO!:")) {
+                else if (data.includes("🚨 ¡ERROR DETECTADO!:")) {
                     console.log("Error signal detected!");
                     // Display as regular log line first
                     validateBox.innerText += data + "\n";
@@ -104,9 +113,6 @@
                         console.log("Triggering error file download...");
                         downloadGeraFiles();
                     }, 1000);
-                    
-                    uploadBtn.classList.remove("disabled-btn");
-                    uploadBtn.disabled = false;
                 }
                 // Check if this is a completion signal
                 else if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
@@ -120,9 +126,6 @@
                         console.log("Triggering download...");
                         downloadGeraFiles();
                     }, 1000);
-                    
-                    uploadBtn.classList.remove("disabled-btn");
-                    uploadBtn.disabled = false;
                 } else if (data.includes("'status': 'error'") || data.includes('"status": "error"')) {
                     console.log("Error signal detected!");
                     validateBox.innerText += "\n✗ Validation failed!\n";
@@ -132,12 +135,6 @@
                     // Regular log line
                     validateBox.innerText += data + "\n";
                     validateBox.scrollTop = validateBox.scrollHeight;
-
-                    // Also enable upload if validation passes
-                    if (data.includes("¡Proceso completado exitosamente!")) {
-                        uploadBtn.classList.remove("disabled-btn");
-                        uploadBtn.disabled = false;
-                    }
                 }
             };
             eventSource.onerror = function(error) {
@@ -155,9 +152,19 @@
             fetch("/download-gera-files")
                 .then(response => {
                     console.log("Download response status:", response.status);
+                    
+                    // Handle 401 Unauthorized
+                    if (response.status === 401) {
+                        window.location.href = "/login";
+                        throw new Error("Session expired. Redirecting to login...");
+                    }
+                    
                     if (!response.ok) {
                         return response.json().then(data => {
                             throw new Error(data.message || "Download failed");
+                        }).catch(parseError => {
+                            // If response is not JSON (HTML error page), show generic error
+                            throw new Error("Server error: " + response.status);
                         });
                     }
                     return response.blob();
@@ -186,42 +193,15 @@
 
         function startUploadStream() {
             const validateBox = document.getElementById("validate");
-            
-            if (selectedFiles.items.length === 0) {
-                validateBox.innerText += "\n✗ No files selected. Please drag and drop Excel files first.\n";
+            validateBox.innerText += "\nStarting upload...\n";
+            const eventSource = new EventSource("/stream-upload");
+            eventSource.onmessage = function(event) {
+                validateBox.innerText += event.data + "\n";
                 validateBox.scrollTop = validateBox.scrollHeight;
-                return;
-            }
-            
-            validateBox.innerText += "\nUploading files...\n";
-            
-            const formData = new FormData();
-            for (let i = 0; i < selectedFiles.files.length; i++) {
-                formData.append("files", selectedFiles.files[i]);
-            }
-            
-            fetch("/upload-files", {
-                method: "POST",
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === "success") {
-                    validateBox.innerText += `✓ File loaded successfully!\n`;
-                    if (data.uploaded_files) {
-                        data.uploaded_files.forEach(file => {
-                            validateBox.innerText += `  - ${file}\n`;
-                        });
-                    }
-                } else {
-                    validateBox.innerText += `✗ Upload failed: ${data.message}\n`;
-                }
-                validateBox.scrollTop = validateBox.scrollHeight;
-            })
-            .catch(error => {
-                validateBox.innerText += `✗ Upload error: ${error.message}\n`;
-                validateBox.scrollTop = validateBox.scrollHeight;
-            });
+            };
+            eventSource.onerror = function() {
+                eventSource.close();
+            };
         }
 
         function startRefreshStream() {
