@@ -100,6 +100,63 @@ button:active {
     background-color: #e0a800;
 }
 
+/* ===== Validation Controls Layout ===== */
+.validation-controls {
+    display: flex;
+    gap: 15px;
+    align-items: stretch;
+    margin-bottom: 15px;
+}
+
+.validation-controls button,
+.validation-controls .drop-zone {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+}
+
+.button-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.button-group button {
+    padding: 12px 24px;
+}
+
+/* ===== Drop Zone ===== */
+.drop-zone {
+    border: 2px dashed #4a6cf7;
+    border-radius: 8px;
+    padding: 4px 24px;
+    text-align: center;
+    cursor: pointer;
+    background-color: #f9f9fb;
+    transition: all 0.3s ease-in-out;
+    color: #666;
+    flex: 0.2;
+}
+
+.drop-zone p {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.2;
+}
+
+.drop-zone p:first-child {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #333;
+}
+
+.drop-zone p:last-child {
+    font-size: 0.75rem;
+    color: #999;
+}
+
 /* ===== Result & Validate Output Boxes ===== */
 .result-box,
 .validate-box {
@@ -135,5 +192,18 @@ button:active {
     .box {
         width: 100%;
         max-width: 250px;
+    }
+    .validation-controls {
+        flex-direction: column;
+    }
+    .drop-zone {
+        padding: 30px 15px;
+    }
+    .button-group {
+        flex-direction: row;
+    }
+    .button-group button {
+        width: auto;
+        flex: 1;
     }
 }

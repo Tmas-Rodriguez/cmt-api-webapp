@@ -2,6 +2,7 @@ import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, flash, send_file
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
+from werkzeug.utils import secure_filename
 
 import subprocess
 import shutil
@@ -10,10 +11,22 @@ from pathlib import Path
 from gera_runner import run_gera
 from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
+from file_handler import save_file_to_organized_folder
 
 app = Flask(__name__)
 
-# Variable to store gera output folder path and start time (using a dict to ensure proper global reference)
+# Configuration for file uploads
+UPLOAD_FOLDER = r"C:\Users\cmt\Documents\Repsitories\EsgCmt-API\CurrentData\providers"
+ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
+
+# Create upload folder if it doesn't exist
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB max file size
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 gera_state = {"output_folder": None, "start_time": None}
 
 companies = [
@@ -194,6 +207,59 @@ def download_gera_files():
     except Exception as e:
         print(f"DEBUG: Exception in download: {str(e)}", flush=True)
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route("/upload-files", methods=["POST"])
+@login_required
+def upload_files():
+    """Upload Excel files to the configured upload folder with organized subfolder structure"""
+    
+    if 'files' not in request.files:
+        return jsonify({"status": "error", "message": "No files provided"}), 400
+    
+    files = request.files.getlist('files')
+    
+    if not files or len(files) == 0:
+        return jsonify({"status": "error", "message": "No files provided"}), 400
+    
+    uploaded_files = []
+    errors = []
+    
+    for file in files:
+        if file.filename == '':
+            errors.append("Empty filename")
+            continue
+        
+        if not allowed_file(file.filename):
+            errors.append(f"{file.filename} - Invalid file type")
+            continue
+        
+        try:
+            # Use file_handler to save file to organized folder
+            success, message, file_path = save_file_to_organized_folder(file, app.config['UPLOAD_FOLDER'])
+            
+            if success:
+                uploaded_files.append(f"{file.filename} ({message})")
+                print(f"DEBUG: File uploaded: {file.filename} to {file_path}", flush=True)
+            else:
+                errors.append(f"{file.filename} - {message}")
+                print(f"DEBUG: Error uploading {file.filename}: {message}", flush=True)
+        except Exception as e:
+            errors.append(f"{file.filename} - {str(e)}")
+            print(f"DEBUG: Error uploading {file.filename}: {str(e)}", flush=True)
+    
+    if uploaded_files:
+        return jsonify({
+            "status": "success",
+            "message": f"Successfully uploaded {len(uploaded_files)} file(s)",
+            "uploaded_files": uploaded_files,
+            "errors": errors if errors else None
+        }), 200
+    else:
+        return jsonify({
+            "status": "error",
+            "message": "No files were uploaded",
+            "errors": errors
+        }), 400
 
 if __name__ == "__main__":
     app.run(debug=True)
