@@ -78,18 +78,83 @@
 
             const eventSource = new EventSource("/stream-gera");
             eventSource.onmessage = function(event) {
-                validateBox.innerText += event.data + "\n";
-                validateBox.scrollTop = validateBox.scrollHeight;
-
-                // Example: Enable upload if validation passes
-                if (event.data.includes("¡Proceso completado exitosamente!")) {
+                const data = event.data;
+                console.log("Received event data:", data);
+                
+                // Check if this is a completion signal
+                if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
+                    console.log("Completion signal detected!");
+                    validateBox.innerText += "\n✓ Validation completed! Starting file download...\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                    eventSource.close();
+                    
+                    // Trigger download after a short delay
+                    setTimeout(function() {
+                        console.log("Triggering download...");
+                        downloadGeraFiles();
+                    }, 1000);
+                    
                     uploadBtn.classList.remove("disabled-btn");
                     uploadBtn.disabled = false;
+                } else if (data.includes("'status': 'error'") || data.includes('"status": "error"')) {
+                    console.log("Error signal detected!");
+                    validateBox.innerText += "\n✗ Validation failed!\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                    eventSource.close();
+                } else {
+                    // Regular log line
+                    validateBox.innerText += data + "\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+
+                    // Also enable upload if validation passes
+                    if (data.includes("¡Proceso completado exitosamente!")) {
+                        uploadBtn.classList.remove("disabled-btn");
+                        uploadBtn.disabled = false;
+                    }
                 }
             };
-            eventSource.onerror = function() {
+            eventSource.onerror = function(error) {
+                console.error("EventSource error:", error);
                 eventSource.close();
             };
+        }
+
+        function downloadGeraFiles() {
+            console.log("downloadGeraFiles() called");
+            const validateBox = document.getElementById("validate");
+            validateBox.innerText += "Starting download request...\n";
+            validateBox.scrollTop = validateBox.scrollHeight;
+            
+            fetch("/download-gera-files")
+                .then(response => {
+                    console.log("Download response status:", response.status);
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            throw new Error(data.message || "Download failed");
+                        });
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    console.log("Blob received, size:", blob.size);
+                    // Create download link
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "validation_errors.zip";
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    a.remove();
+                    
+                    validateBox.innerText += "✓ Files downloaded successfully!\n";
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                })
+                .catch(error => {
+                    console.error("Download error:", error);
+                    validateBox.innerText += `\n✗ Download error: ${error.message}\n`;
+                    validateBox.scrollTop = validateBox.scrollHeight;
+                });
         }
 
         function startUploadStream() {
