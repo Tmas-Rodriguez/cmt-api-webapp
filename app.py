@@ -1,14 +1,20 @@
 import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
-from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, flash
+from flask import Flask, render_template, request, jsonify, Response, redirect, url_for, flash, send_file
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 
 import subprocess
+import shutil
+import zipfile
+from pathlib import Path
 from gera_runner import run_gera
 from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
 
 app = Flask(__name__)
+
+# Variable to store gera output folder path and start time (using a dict to ensure proper global reference)
+gera_state = {"output_folder": None, "start_time": None}
 
 companies = [
     {"id": "box1", "name": "Santander"},
@@ -90,8 +96,26 @@ def submit():
 @app.route("/stream-gera")
 def stream_gera():
     def event_stream():
-        for line in run_gera():
-            yield f"data: {line}\n\n"
+        try:
+            for line in run_gera():
+                if line.startswith("__GERA_COMPLETED__:"):
+                    # Parse the completion signal: folder_path|start_time
+                    parts = line.split(":", 1)[1].strip().split("|")
+                    folder_path = parts[0]
+                    start_time = float(parts[1]) if len(parts) > 1 else None
+                    gera_state["output_folder"] = folder_path
+                    gera_state["start_time"] = start_time
+                    print(f"DEBUG: Gera completed. Output folder: {folder_path}, Start time: {start_time}", flush=True)
+                    yield f"data: {{'status': 'completed', 'message': 'Script completed successfully'}}\n\n"
+                elif line.startswith("__GERA_ERROR__:"):
+                    error_code = line.split(":", 1)[1].strip()
+                    print(f"DEBUG: Gera error: {error_code}", flush=True)
+                    yield f"data: {{'status': 'error', 'message': 'Script failed with code: {error_code}'}}\n\n"
+                else:
+                    yield f"data: {line}\n\n"
+        except Exception as e:
+            print(f"DEBUG: Stream error: {str(e)}", flush=True)
+            yield f"data: {{'status': 'error', 'message': 'Stream error: {str(e)}'}}\n\n"
     return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route("/stream-refresh")
@@ -109,6 +133,67 @@ def stream_upload():
         for line in run_upload():
             yield f"data: {line}\n\n"
     return Response(event_stream(), mimetype="text/event-stream")
+
+@app.route("/download-gera-files")
+@login_required
+def download_gera_files():
+    """Download only the new files generated in the last gera run as a ZIP"""
+    
+    output_folder = gera_state.get("output_folder")
+    start_time = gera_state.get("start_time")
+    
+    print(f"DEBUG: Download requested. output_folder = {output_folder}, start_time = {start_time}", flush=True)
+    
+    if not output_folder:
+        print("DEBUG: output_folder is None or empty", flush=True)
+        return jsonify({"status": "error", "message": "No output folder set. Please run validation first."}), 400
+    
+    if not os.path.exists(output_folder):
+        print(f"DEBUG: Output folder does not exist: {output_folder}", flush=True)
+        return jsonify({"status": "error", "message": f"Output folder does not exist: {output_folder}"}), 400
+    
+    try:
+        # Create a temporary ZIP file
+        zip_path = os.path.join(os.path.dirname(__file__), "validation_errors.zip")
+        
+        # Remove old ZIP if it exists
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        
+        print(f"DEBUG: Creating ZIP file at {zip_path}", flush=True)
+        
+        # Create ZIP file with only files modified after start_time
+        file_count = 0
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(output_folder):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    # Get file modification time
+                    file_mtime = os.path.getmtime(file_path)
+                    
+                    # Only include files modified after the script start time
+                    # Add a small buffer (2 seconds before start_time) to account for timing variations
+                    if start_time is None or file_mtime >= (start_time - 2):
+                        arcname = os.path.relpath(file_path, output_folder)
+                        zipf.write(file_path, arcname)
+                        file_count += 1
+                        print(f"DEBUG: Including file: {arcname} (mtime: {file_mtime}, start_time: {start_time})", flush=True)
+                    else:
+                        print(f"DEBUG: Skipping old file: {file} (mtime: {file_mtime}, start_time: {start_time})", flush=True)
+        
+        print(f"DEBUG: ZIP created successfully with {file_count} files", flush=True)
+        
+        # Send the file
+        return send_file(
+            zip_path,
+            as_attachment=True,
+            download_name="validation_errors.zip",
+            mimetype="application/zip"
+        )
+    
+    except Exception as e:
+        print(f"DEBUG: Exception in download: {str(e)}", flush=True)
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
