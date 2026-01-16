@@ -37,8 +37,17 @@
     </div>
 
     <h2>Validate CSV files</h2>
-    <button class="validate-btn" onclick="startGeraStream()">Validate</button>
-    <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
+    
+    <div class="validation-controls">
+        <button class="validate-btn" onclick="startGeraStream()">Validate</button>
+        <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
+        <div id="dropZone" class="drop-zone">
+            <p>📁 Drop Excel files</p>
+            <p>or click</p>
+            <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" style="display: none;">
+        </div>
+    </div>
+    
     <div id="validate" class="validate-box"></div>
 
     <script>
@@ -159,15 +168,42 @@
 
         function startUploadStream() {
             const validateBox = document.getElementById("validate");
-            validateBox.innerText += "\nStarting upload...\n";
-            const eventSource = new EventSource("/stream-upload");
-            eventSource.onmessage = function(event) {
-                validateBox.innerText += event.data + "\n";
+            
+            if (selectedFiles.items.length === 0) {
+                validateBox.innerText += "\n✗ No files selected. Please drag and drop Excel files first.\n";
                 validateBox.scrollTop = validateBox.scrollHeight;
-            };
-            eventSource.onerror = function() {
-                eventSource.close();
-            };
+                return;
+            }
+            
+            validateBox.innerText += "\nUploading files...\n";
+            
+            const formData = new FormData();
+            for (let i = 0; i < selectedFiles.files.length; i++) {
+                formData.append("files", selectedFiles.files[i]);
+            }
+            
+            fetch("/upload-files", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    validateBox.innerText += `✓ File loaded successfully!\n`;
+                    if (data.uploaded_files) {
+                        data.uploaded_files.forEach(file => {
+                            validateBox.innerText += `  - ${file}\n`;
+                        });
+                    }
+                } else {
+                    validateBox.innerText += `✗ Upload failed: ${data.message}\n`;
+                }
+                validateBox.scrollTop = validateBox.scrollHeight;
+            })
+            .catch(error => {
+                validateBox.innerText += `✗ Upload error: ${error.message}\n`;
+                validateBox.scrollTop = validateBox.scrollHeight;
+            });
         }
 
         function startRefreshStream() {
@@ -189,6 +225,112 @@
             };
 
         }
+
+        // Drag and Drop functionality
+        const dropZone = document.getElementById("dropZone");
+        const fileInput = document.getElementById("fileInput");
+        let selectedFiles = new DataTransfer();
+
+        // Prevent default drag behaviors
+        ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
+            dropZone.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        // Highlight drop zone when dragging over it
+        ["dragenter", "dragover"].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.add("drag-over");
+            }, false);
+        });
+
+        ["dragleave", "drop"].forEach(eventName => {
+            dropZone.addEventListener(eventName, () => {
+                dropZone.classList.remove("drag-over");
+            }, false);
+        });
+
+        // Handle dropped files
+        dropZone.addEventListener("drop", handleDrop, false);
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            handleFiles(files);
+        }
+
+        function handleFiles(files) {
+            const validateBox = document.getElementById("validate");
+            validateBox.innerText = "";
+            selectedFiles = new DataTransfer();
+
+            for (let file of files) {
+                // Check if file is an Excel file
+                const isExcelFile = /\.(xlsx?|csv)$/i.test(file.name);
+                
+                if (isExcelFile) {
+                    selectedFiles.items.add(file);
+                    const msg = `✓ File selected: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
+                    console.log(msg);
+                    validateBox.innerText += msg + "\n";
+                } else {
+                    const msg = `✗ File rejected: ${file.name} - Only Excel (.xlsx, .xls) and CSV files are allowed`;
+                    console.log(msg);
+                    validateBox.innerText += msg + "\n";
+                }
+            }
+
+            // Auto-load valid files
+            if (selectedFiles.files.length > 0) {
+                validateBox.innerText += "\nLoading files...\n";
+                uploadFilesAutomatically();
+            }
+        }
+
+        function uploadFilesAutomatically() {
+            const validateBox = document.getElementById("validate");
+            
+            const formData = new FormData();
+            for (let i = 0; i < selectedFiles.files.length; i++) {
+                formData.append("files", selectedFiles.files[i]);
+            }
+            
+            fetch("/upload-files", {
+                method: "POST",
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    validateBox.innerText += `✓ Files loaded successfully!\n`;
+                    if (data.uploaded_files) {
+                        data.uploaded_files.forEach(file => {
+                            validateBox.innerText += `  - ${file}\n`;
+                        });
+                    }
+                } else {
+                    validateBox.innerText += `✗ Load failed: ${data.message}\n`;
+                }
+                validateBox.scrollTop = validateBox.scrollHeight;
+            })
+            .catch(error => {
+                validateBox.innerText += `✗ Load error: ${error.message}\n`;
+                validateBox.scrollTop = validateBox.scrollHeight;
+            });
+        }
+
+        // Click to select files
+        dropZone.addEventListener("click", () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener("change", (e) => {
+            handleFiles(e.target.files);
+        });
 
     </script>
 </body>
