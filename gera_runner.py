@@ -4,7 +4,7 @@ import json
 import time
 
 # Path to store output folder info
-GERA_OUTPUT_FOLDER = "C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API\\errors"  # Update this to match your output folder
+GERA_OUTPUT_FOLDER = "/app/EsgCmt-API/errors"
 
 def run_gera():
     # Record the start time before running the script
@@ -14,7 +14,7 @@ def run_gera():
     env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.Popen(
         ["python", "-u", "gera.py"],  # <- add -u for unbuffered
-        cwd="C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API",
+        cwd="/app/EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,

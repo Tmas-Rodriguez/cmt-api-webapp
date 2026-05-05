@@ -1,0 +1,19 @@
+tunnel: 5c506711-6cd2-44a8-ab84-250a66d37337
+credentials-file: C:/Users/cmt/.cloudflared/5c506711-6cd2-44a8-ab84-250a66d37337.json
+
+ingress:
+  # 1. Specific paths MUST be at the top
+  - hostname: app.cmtdbmanager.site
+    path: /data_entry
+    service: http://localhost:5500
+
+  - hostname: app.cmtdbmanager.site
+    path: /mismatch
+    service: http://localhost:8051
+
+  # 2. General root hostname MUST be after specific paths
+  - hostname: app.cmtdbmanager.site
+    service: http://localhost:5000
+
+  # 3. Fallback
+  - service: http_status:404

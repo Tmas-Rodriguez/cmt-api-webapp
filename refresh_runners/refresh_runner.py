@@ -21,8 +21,8 @@ def run_refresh(client,user):
     env["PYTHONIOENCODING"] = "utf-8"
 
     process = subprocess.Popen(
-        [sys.executable, "-u", f"refreshDB_{company_name.lower().replace(" ", "_")}.py"],
-        cwd="C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API",
+        [sys.executable, "-u", f"refreshDB_{company_name.lower().replace(' ', '_')}.py"],
+        cwd="/app/EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,

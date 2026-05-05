@@ -18,7 +18,7 @@ from file_handler import save_file_to_organized_folder
 app = Flask(__name__)
 
 # Configuration for file uploads
-UPLOAD_FOLDER = r"C:\Users\cmt\Documents\Repsitories\EsgCmt-API\CurrentData\providers"
+UPLOAD_FOLDER = "/app/EsgCmt-API"
 ALLOWED_EXTENSIONS = {'xlsx', 'xls', 'csv'}
 
 # Create upload folder if it doesn't exist
