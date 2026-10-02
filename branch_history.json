@@ -1,0 +1,289 @@
+[
+  {
+    "timestamp": "2026-09-02T14:56:21",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "startup"
+  },
+  {
+    "timestamp": "2026-09-03T15:46:00",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T10:08:37",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T12:32:44",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T13:19:21",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T13:36:18",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T13:40:56",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T13:55:16",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T14:11:19",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T14:18:54",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T14:28:15",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T14:31:09",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-04T14:43:42",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-08T09:58:26",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-08T10:43:53",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-11T13:09:30",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-11T15:30:26",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-14T16:33:24",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T12:24:08",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T12:25:10",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T12:25:20",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T14:46:25",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T15:15:47",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-15T15:16:00",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-16T12:21:00",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-18T10:23:05",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-21T12:52:09",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-21T18:08:33",
+    "branch": "laanonima-prod",
+    "version": "19326a0-dirty",
+    "commit": "19326a026516f3f35fd3981efedbf0813e9e8ce0",
+    "source": "startup"
+  },
+  {
+    "timestamp": "2026-09-22T10:18:53",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-22T13:25:37",
+    "branch": "laanonima-prod",
+    "version": "19326a0-dirty",
+    "commit": "19326a026516f3f35fd3981efedbf0813e9e8ce0",
+    "source": "startup"
+  },
+  {
+    "timestamp": "2026-09-22T18:31:31",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-22T18:31:41",
+    "branch": "patron-v1.7",
+    "version": "0eb9f9e-dirty",
+    "commit": "0eb9f9e4e8b96e3f6fd36ce9a077a04cf94de02a",
+    "source": "switch"
+  },
+  {
+    "timestamp": "2026-09-23T09:44:02",
+    "branch": "patron-v1.6",
+    "version": "8357b01-dirty",
+    "commit": "8357b01bc11f7a261d206e2cc1f74e59cf32d702",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-23T10:26:58",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-23T15:10:44",
+    "branch": "patron-v1.5",
+    "version": "19326a0-dirty",
+    "commit": "19326a026516f3f35fd3981efedbf0813e9e8ce0",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-24T12:26:19",
+    "branch": "patron-v1.6",
+    "version": "8357b01-dirty",
+    "commit": "8357b01bc11f7a261d206e2cc1f74e59cf32d702",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-25T10:05:51",
+    "branch": "patron-v1.4",
+    "version": "c57bcc1-dirty",
+    "commit": "c57bcc1c5df8e50a4cde8d79f68d72b4e8e1856f",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-25T10:18:31",
+    "branch": "patron-v1.5",
+    "version": "19326a0-dirty",
+    "commit": "19326a026516f3f35fd3981efedbf0813e9e8ce0",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-09-28T15:34:09",
+    "branch": "patron-v1.6",
+    "version": "8357b01-dirty",
+    "commit": "8357b01bc11f7a261d206e2cc1f74e59cf32d702",
+    "source": "validate"
+  },
+  {
+    "timestamp": "2026-10-02T10:45:18",
+    "branch": "patron-v1.6",
+    "version": "44f5025",
+    "commit": "44f5025bed67d02f6547be54308e0a7f553de487",
+    "source": "startup"
+  },
+  {
+    "timestamp": "2026-10-02T10:52:35",
+    "branch": "patron-v1.6",
+    "version": "3a0d9eb-dirty",
+    "commit": "3a0d9eb121ba7ef8f37fc1cd5e2d89bf2cf63106",
+    "source": "startup"
+  }
+]

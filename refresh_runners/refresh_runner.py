@@ -6,8 +6,10 @@ companies = [
     {"id": "box1", "name": "Santander"},
     {"id": "box2", "name": "Grupo Petersen"},
     {"id": "box3", "name": "Alsea"},
-    {"id": "box4", "name": "La Anónima"},
+    {"id": "box4", "name": "La Anonima"},
     {"id": "box5", "name": "Mostaza"},
+    {"id": "box6", "name": "DIA"},
+    {"id": "box7", "name": "Demo"},
 ]
 
 def run_refresh(client,user):

@@ -1,0 +1,9 @@
+{
+  "box1": {"name": "Santander", "branch": "patron-v1.5"},
+  "box2": {"name": "Grupo Petersen", "branch": "patron-v1.5"},
+  "box3": {"name": "Alsea", "branch": "patron-v1.5"},
+  "box4": {"name": "La Anonima", "branch": "patron-v1.5"},
+  "box5": {"name": "Mostaza", "branch": "patron-v1.5"},
+  "box6": {"name": "DIA", "branch": "patron-v1.6"},
+  "box7": {"name": "Demo", "branch": "patron-v1.6"}
+}

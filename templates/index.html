@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='1.0') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.1') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
     <style>
         .forbidden {
@@ -19,26 +19,58 @@
     </style>
 </head>
 <body>
-    <h1>CMT - Data Base Manager</h1>
-    <h2>Bucket Refresh</h2>
+    <div class="topbar">
+        <h1>CMT - Administrador de Base de Datos</h1>
+        <button id="awsSsoPill" class="aws-pill checking" type="button"
+                title="Sesión SSO de AWS — necesaria para Actualizar y Upload (match_query, etc.)">AWS…</button>
+    </div>
+
+    <div id="awsSsoModal" class="aws-modal" hidden>
+        <div class="aws-modal-card">
+            <h3>Iniciar sesión SSO de AWS</h3>
+            <p id="awsModalMessage">Iniciando login...</p>
+            <p>1. Abrí este link: <a id="awsModalLink" class="aws-modal-link" href="#" target="_blank" rel="noopener"></a></p>
+            <p>2. Confirmá el código: <span id="awsModalCode" class="aws-modal-code"></span></p>
+            <button id="awsModalClose" type="button" class="aws-modal-close">Cerrar</button>
+        </div>
+    </div>
+
+    <div class="branch-header">
+        <div id="branchStatus" class="branch-status" aria-live="polite">Versión actual del patron: desconocida</div>
+    </div>
+
+    <h2>Actualizar bucket</h2>
     <div class="container">
         {% for client in companies %}
-        <div class="box {% if client.name == 'ICBC' %}forbidden{% endif %}" 
+        <div class="box {% if client.name == 'ICBC' %}forbidden{% endif %}"
              id="{{ client.id }}"
-             {% if client.name != 'ICBC' %}onclick="selectBox('{{ client.id }}')" {% endif %}>
-            {{ client.name }}
+             data-token="{{ client.token }}"
+             {% if client.name != 'ICBC' %}onclick="if (selectBox('{{ client.id }}') !== false) toggleUnmatched('{{ client.id }}')" {% endif %}>
+            <span class="box-name">{{ client.name }}</span>
+            <span class="pdf-count-badge {% if client.unmatched == 0 %}zero{% endif %}" data-token="{{ client.token }}"
+                  title="PDFs sin matchear en este entorno"
+                  {% if client.unmatched is none %}hidden{% endif %}>{{ client.unmatched if client.unmatched is not none else '' }}</span>
+            <div class="box-lock-overlay" hidden onclick="event.stopPropagation()">
+                <span class="box-lock-text"></span>
+                <button type="button" class="box-lock-force" onclick="forceReleaseLock('{{ client.id }}')">Forzar desbloqueo</button>
+            </div>
         </div>
         {% endfor %}
     </div>
 
+    <div id="unmatchedPanel" class="pdf-report unmatched-panel" hidden></div>
+
     <div id="sumit-and-result">
-        <button class="submit-btn" onclick="startRefreshStream()">Refresh</button>
-        <div id="result" class="result-box"></div>
+        <button class="submit-btn" onclick="startRefreshStream()">Actualizar</button>
+        <div id="refreshPanel" class="process-panel" data-state="idle" hidden></div>
+        <div id="pdfReport" class="pdf-report" hidden></div>
+        <div id="refreshErrors" class="err-reports" hidden></div>
     </div>
 
-    <h2>Validate CSV files</h2>
-    
+    <h2>Validar archivos CSV</h2>
+
     <div class="validation-controls">
+        <button class="import-sheets-btn" onclick="importFromSheets()">Importar desde Sheets</button>
         <button class="validate-btn" onclick="startGeraStream()">Validate</button>
         <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
         <div id="dropZone" class="drop-zone">
@@ -47,21 +79,33 @@
             <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" style="display: none;">
         </div>
     </div>
-    
-    <div id="validate" class="validate-box"></div>
+
+    <div id="validatePanel" class="process-panel" data-state="idle" hidden></div>
+    <div id="validationMetrics" class="err-reports" hidden></div>
+    <div id="validateErrors" class="err-reports" hidden></div>
 
     <script>
         let selectedId = null;
+        const CURRENT_USER = "{{ current_user.name }}";
+        let LOCKS = {};   // client_id -> {locked_by, flow, started_at}, alimentado por /stream-locks
 
         const colors = {
             "box1": "#c44c4c", // Santander soft red
             "box2": "#343a40", // Grupo Petersen charcoal
             "box3": "#3b5d4c", // Alsea muted dark green
-            "box4": "#4361b3", // La Anónima softer blue
-            "box5": "#868e96"  // ICBC soft gray
+            "box4": "#4361b3", // La Anonima softer blue
+            "box5": "#868e96", // Mostaza soft gray
+            "box6": "#c0392b", // DIA red
+            "box7": "#e67e22"  // Demo orange
         };
 
         function selectBox(id) {
+            const lock = LOCKS[id];
+            if (lock && lock.locked_by !== CURRENT_USER) {
+                alert(`Este cliente está en uso por ${lock.locked_by} (${lock.flow}).`);
+                return false;
+            }
+
             document.querySelectorAll('.box').forEach(b => {
                 b.classList.remove('selected');
                 b.style.backgroundColor = "";
@@ -78,100 +122,400 @@
             localStorage.setItem("clientId", id);
         }
 
-        function startGeraStream() {
-            const validateBox = document.getElementById("validate");
-            validateBox.innerText = "";
+        // ===== Lock por cliente en tiempo real (ver locks.py) =====
+        // /stream-locks manda el snapshot inicial + cada lock/unlock en vivo: ninguna
+        // pestaña necesita refrescar para enterarse de que otro usuario está en un cliente.
+        function applyLockToBox(clientId) {
+            const box = document.getElementById(clientId);
+            if (!box) return;
+            const overlay = box.querySelector(".box-lock-overlay");
+            const text = box.querySelector(".box-lock-text");
+            const lock = LOCKS[clientId];
+
+            if (!lock) {
+                box.classList.remove("locked");
+                if (overlay) overlay.hidden = true;
+                return;
+            }
+
+            box.classList.add("locked");
+            if (text) text.textContent = `🔒 ${lock.locked_by} (${lock.flow})`;
+            if (overlay) overlay.hidden = false;
+        }
+
+        function forceReleaseLock(clientId) {
+            const lock = LOCKS[clientId];
+            const label = lock ? `${lock.locked_by} (${lock.flow})` : "este cliente";
+            if (!confirm(`¿Forzar el desbloqueo de ${label}? Solo hacé esto si estás seguro de que no hay ningún proceso corriendo realmente.`)) return;
+            fetch(`/client-locks/${clientId}/force-release`, { method: "POST" }).catch(() => {});
+        }
+
+        function connectLocksStream() {
+            const source = new EventSource("/stream-locks");
+            source.onmessage = function (event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === "lock") {
+                        LOCKS[data.client_id] = { locked_by: data.locked_by, flow: data.flow, started_at: data.started_at };
+                    } else if (data.type === "unlock") {
+                        delete LOCKS[data.client_id];
+                    }
+                    applyLockToBox(data.client_id);
+                } catch (e) { /* ignorar keep-alive u otros mensajes no JSON */ }
+            };
+            source.onerror = function () {
+                // El navegador reintenta solo; si el server tarda en volver, no hacemos nada especial.
+            };
+        }
+
+        // Toma el lock de `clientId` para `flow` ("validate"/"upload"/"refresh") antes de
+        // abrir el EventSource correspondiente. Devuelve true si se pudo, o avisa y
+        // devuelve false si otro usuario ya lo tiene.
+        async function acquireClientLock(clientId, flow) {
+            const response = await fetch(`/client-locks/${clientId}/acquire`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ flow })
+            });
+            const data = await response.json();
+            if (!response.ok || data.status !== "success") {
+                alert(data.message || "Este cliente está en uso.");
+                return false;
+            }
+            return true;
+        }
+
+        /* =========================================================================
+           ProcessTracker: convierte el stream de líneas de un proceso en un stepper
+           con estados (pendiente / en curso / hecho / fallado), un ticker con la
+           última línea, y un registro completo colapsable como respaldo.
+
+           `matchLine(line, needles)` -> true si la línea contiene alguna de las
+           subcadenas. Los "steps" avanzan cuando una línea matchea su `match`.
+           ========================================================================= */
+        const BADGES = {
+            idle: "En espera",
+            running: "En curso",
+            success: "Completado",
+            error: "Error",
+            closed: "Interrumpido"
+        };
+
+        function matchLine(line, needles) {
+            if (!needles) return false;
+            return needles.some(n => line.indexOf(n) !== -1);
+        }
+
+        class ProcessTracker {
+            constructor(panel, config) {
+                this.panel = panel;
+                this.title = config.title;
+                this.steps = config.steps.map(s => ({ label: s.label, match: s.match, sub: !!s.sub, status: "pending" }));
+                this.successMatch = config.success || [];
+                this.errorMatch = config.error || [];
+                this.onSuccess = config.onSuccess || null;
+                this.onError = config.onError || null;
+                this.current = -1;
+                this.finished = false;
+                this.render();
+            }
+
+            render() {
+                const stepsHtml = this.steps.map((s, i) =>
+                    `<li class="pp-step${s.sub ? " pp-substep" : ""}" data-status="pending" data-index="${i}">
+                        <span class="pp-icon">${s.sub ? "•" : (i + 1)}</span>
+                        <span class="pp-label"></span>
+                     </li>`
+                ).join("");
+                this.panel.hidden = false;
+                this.panel.setAttribute("data-state", "running");
+                this.panel.innerHTML =
+                    `<div class="pp-header">
+                        <span class="pp-title">${this.title}</span>
+                        <span class="pp-badge">${BADGES.running}</span>
+                     </div>
+                     <ol class="pp-steps">${stepsHtml}</ol>
+                     <div class="pp-ticker">Iniciando…</div>
+                     <details class="pp-log"><summary>Ver registro completo</summary><pre></pre></details>`;
+
+                this.badgeEl = this.panel.querySelector(".pp-badge");
+                this.tickerEl = this.panel.querySelector(".pp-ticker");
+                this.logEl = this.panel.querySelector(".pp-log pre");
+                this.detailsEl = this.panel.querySelector(".pp-log");
+                this.stepEls = Array.from(this.panel.querySelectorAll(".pp-step"));
+                // Etiquetas por textContent para no interpretar HTML.
+                this.steps.forEach((s, i) => {
+                    this.stepEls[i].querySelector(".pp-label").textContent = s.label;
+                });
+            }
+
+            _setState(state) {
+                this.panel.setAttribute("data-state", state);
+                this.badgeEl.textContent = BADGES[state] || state;
+            }
+
+            _renderStep(i) {
+                const el = this.stepEls[i];
+                const st = this.steps[i].status;
+                el.setAttribute("data-status", st);
+                const icon = el.querySelector(".pp-icon");
+                if (st === "done") icon.textContent = "✓";
+                else if (st === "failed") icon.textContent = "✗";
+                else icon.textContent = this.steps[i].sub ? "•" : String(i + 1);
+            }
+
+            _advanceTo(i) {
+                for (let k = 0; k < i; k++) {
+                    if (this.steps[k].status !== "failed" && this.steps[k].status !== "done") {
+                        this.steps[k].status = "done";
+                        this._renderStep(k);
+                    }
+                }
+                this.steps[i].status = "running";
+                this._renderStep(i);
+                this.current = i;
+            }
+
+            _appendLog(line) {
+                this.logEl.textContent += line + "\n";
+                this.logEl.scrollTop = this.logEl.scrollHeight;
+            }
+
+            _setTicker(line) {
+                const t = line.trim();
+                if (t) this.tickerEl.textContent = t;
+            }
+
+            // Feed de una línea del stream.
+            pushLine(line) {
+                this._appendLog(line);
+                this._setTicker(line);
+                if (this.finished) return;
+
+                if (matchLine(line, this.errorMatch)) {
+                    this.fail();
+                    return;
+                }
+                if (matchLine(line, this.successMatch)) {
+                    this.succeed();
+                    return;
+                }
+                // Buscar el step más avanzado cuyo marcador aparezca en la línea.
+                for (let i = this.steps.length - 1; i > this.current; i--) {
+                    if (matchLine(line, this.steps[i].match)) {
+                        this._advanceTo(i);
+                        break;
+                    }
+                }
+            }
+
+            // Nota informativa que no afecta a los pasos (p. ej. descarga de errores).
+            note(msg) {
+                this._appendLog(msg);
+                this._setTicker(msg);
+            }
+
+            succeed() {
+                if (this.finished) return;
+                this.finished = true;
+                this.steps.forEach((s, i) => {
+                    if (s.status !== "failed") { s.status = "done"; this._renderStep(i); }
+                });
+                this._setState("success");
+                this._setTicker("Proceso completado exitosamente.");
+                if (this.onSuccess) this.onSuccess();
+            }
+
+            fail(msg) {
+                if (this.finished) return;
+                this.finished = true;
+                if (this.current >= 0) {
+                    this.steps[this.current].status = "failed";
+                    this._renderStep(this.current);
+                }
+                this._setState("error");
+                if (msg) this._setTicker(msg);
+                this.detailsEl.open = true; // abrir el log crudo ante un fallo
+                if (this.onError) this.onError();
+            }
+
+            // La conexión SSE se cerró. Éxito real ya lo detectamos por marcador; si
+            // no, marcamos interrupción.
+            onClose() {
+                if (this.finished) return;
+                this.finished = true;
+                if (this.current >= 0) {
+                    this.steps[this.current].status = "failed";
+                    this._renderStep(this.current);
+                }
+                this._setState("error");
+                this.badgeEl.textContent = BADGES.closed;
+                this._setTicker("La conexión con el proceso se interrumpió.");
+                this.detailsEl.open = true;
+            }
+        }
+
+        /* Sub-etapas de "just all" (gera). Cada receta que corre `just all` se
+           anuncia con una línea `just <receta> ...` en el stream — verificado con
+           una corrida real. Ver justfile (receta `all`) en EsgCmt-API. */
+        const SERVICES = [
+            ["electricity", "electricidad"],
+            ["gas", "gas"],
+            ["water", "agua"],
+            ["residue", "residuos"],
+            ["fuel", "combustible"],
+            ["other", "otros"]
+        ];
+
+        const GERA_STEPS = [
+            { label: "Buscando la carpeta más reciente", match: ["Buscando la carpeta más reciente", "Carpeta más reciente encontrada"] },
+            { label: "Configurando entorno (.env.script)", match: ["Creando archivo .env.script", "Archivo .env.script actualizado", "Bucket configurado", "Configuración completada"] },
+            { label: "Eliminando base de datos previa", match: ["Eliminando base de datos"] },
+            { label: "Importando datos (just all)", match: ["Ejecutando comando just all", "Comando a ejecutar", "Archivos Excel detectados", "Solapa '"] },
+            // Sub-etapas internas de just all (indentadas). El espacio final en algunos
+            // marcadores evita colisiones (p. ej. "just chart " vs "just chart_blanks").
+            { label: "Organización", sub: true, match: ["just organization"] },
+            { label: "Migración de la base", sub: true, match: ["just migration_db"] },
+            { label: "Sitios", sub: true, match: ["just site "] },
+            { label: "Factores de emisión", sub: true, match: ["just emission_factor"] },
+            { label: "Sub-scopes", sub: true, match: ["just sub_scope"] },
+            { label: "Targets", sub: true, match: ["just target "] },
+            ...SERVICES.map(([k, es]) => ({ label: "Cuentas · " + es, sub: true, match: ["just account_" + k] })),
+            ...SERVICES.map(([k, es]) => ({ label: "Facturas · " + es, sub: true, match: ["just invoice_" + k] })),
+            { label: "Multas / OPAH", sub: true, match: ["just fine "] },
+            { label: "Chequeo de solapamiento", sub: true, match: ["just invoice_overlap_check"] },
+            { label: "Chequeo de solapamiento parcial", sub: true, match: ["just invoice_partial_overlap_check"] },
+            { label: "Gráficos", sub: true, match: ["just chart "] },
+            { label: "Gráficos · sin datos", sub: true, match: ["just chart_blanks"] },
+            { label: "Gráficos · proyección", sub: true, match: ["just chart_projection"] },
+            { label: "Bandas horarias", sub: true, match: ["just chart_time_band "] },
+            { label: "Bandas horarias · sin datos", sub: true, match: ["just chart_time_band_blank"] }
+        ];
+
+        /* ===== Definición de pasos por flujo ===== */
+        const FLOWS = {
+            refresh: {
+                title: "Actualizar bucket",
+                steps: [
+                    { label: "Verificando sesiones SSO", match: ["Verificando sesiones SSO"] },
+                    { label: "Configurando bucket", match: ["Bucket configurado"] },
+                    { label: "Ejecutando pasos de refresh", match: ["Ejecutando paso #", "Ejecutando paso"] },
+                    { label: "Limpiando temporales", match: ["Eliminando archivos temporales"] }
+                ],
+                success: ["Proceso completado exitosamente"],
+                error: ["Error al ejecutar el comando", "Opción no válida", "Formato de fecha incorrecto", "Traceback (most recent call last)"]
+            },
+            gera: {
+                title: "Validación de CSV (gera)",
+                // Pasos externos + sub-etapas de just all (ver GERA_STEPS arriba).
+                steps: GERA_STEPS,
+                success: ["¡Proceso completado exitosamente!"],
+                error: ["¡ERROR DETECTADO!", "Proceso terminado debido a errores", "just all falló", "'status': 'error'", '"status": "error"', "❌ Error:"]
+            },
+            upload: {
+                title: "Subida a la base de datos (Upload)",
+                steps: [
+                    { label: "Buscando la carpeta más reciente", match: ["Buscando la carpeta más reciente", "Carpeta más reciente encontrada"] },
+                    { label: "Configurando entorno (.env.script)", match: ["Creando archivo .env.script", "Archivo .env.script actualizado", "Bucket configurado"] },
+                    { label: "Exportando datos", match: ["Exportación completada"] },
+                    { label: "Ejecutando comandos de subida", match: ["🔧 Ejecutando:", "Ejecutando:"] }
+                ],
+                success: ["¡Proceso completado exitosamente!"],
+                error: ["❌ Error", "No se encontró el comando", "hubo errores en la ejecución"]
+            }
+        };
+
+        let validateTracker = null; // panel compartido por import/validate/upload
+        let refreshTracker = null;
+
+        function resetDownstreamButtons() {
             const uploadBtn = document.getElementById("uploadBtn");
             uploadBtn.classList.add("disabled-btn");
             uploadBtn.disabled = true;
+        }
 
-            const eventSource = new EventSource("/stream-gera");
-            eventSource.onmessage = function(event) {
+        function enableDownstreamButtons() {
+            const uploadBtn = document.getElementById("uploadBtn");
+            uploadBtn.classList.remove("disabled-btn");
+            uploadBtn.disabled = false;
+        }
+
+        async function startGeraStream() {
+            if (!selectedId) {
+                alert("Seleccioná un cliente primero.");
+                return;
+            }
+            if (!(await acquireClientLock(selectedId, "validate"))) return;
+
+            resetDownstreamButtons();
+            resetErrorReports("validateErrors");
+            resetErrorReports("validationMetrics");
+            validateTracker = new ProcessTracker(document.getElementById("validatePanel"), {
+                ...FLOWS.gera,
+                onSuccess: enableDownstreamButtons
+            });
+            const tracker = validateTracker;
+
+            try {
+                await ensureClientBranch(selectedId);
+            } catch (error) {
+                tracker.fail(error.message);
+                return;
+            }
+
+            const eventSource = new EventSource("/stream-gera?selectedId=" + selectedId);
+            eventSource.onmessage = function (event) {
                 const data = event.data;
-                console.log("Received event data:", data);
-                
-                // Check if success message received
-                if (data.includes("🎉 ¡Proceso completado exitosamente!")) {
-                    console.log("Success signal detected!");
-                    validateBox.innerText += data + "\n";
-                    validateBox.innerText += "\n✓ Validation completed successfully! Upload button enabled.\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
-                    uploadBtn.classList.remove("disabled-btn");
-                    uploadBtn.disabled = false;
+
+                if (data.startsWith("__GERA_METRICS__:")) {
+                    try {
+                        renderMetricsDiff(JSON.parse(data.slice("__GERA_METRICS__:".length)));
+                    } catch (e) {
+                        console.error("No se pudo interpretar __GERA_METRICS__", e);
+                    }
+                    return;
                 }
-                // Check if error detected
-                else if (data.includes("🚨 ¡ERROR DETECTADO!:")) {
-                    console.log("Error signal detected!");
-                    // Display as regular log line first
-                    validateBox.innerText += data + "\n";
-                    validateBox.innerText += "\n✗ Error detected! Downloading error files...\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
+                tracker.pushLine(data);
+
+                if (data.includes("🚨 ¡ERROR DETECTADO!:")) {
                     eventSource.close();
-                    
-                    // Trigger download after a short delay
-                    setTimeout(function() {
-                        console.log("Triggering error file download...");
-                        downloadGeraFiles();
-                    }, 1000);
-                }
-                // Check if this is a completion signal
-                else if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
-                    console.log("Completion signal detected!");
-                    validateBox.innerText += "\n✓ Validation completed! Starting file download...\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
+                    tracker.note("Cargando reportes de error…");
+                    fetchAndRenderErrors("gera", "validateErrors", downloadGeraFiles, tracker);
+                } else if (data.includes("'status': 'completed'") || data.includes('"status": "completed"')) {
                     eventSource.close();
-                    
-                    // Trigger download after a short delay
-                    setTimeout(function() {
-                        console.log("Triggering download...");
-                        downloadGeraFiles();
-                    }, 1000);
+                    tracker.note("Cargando reportes de la corrida…");
+                    fetchAndRenderErrors("gera", "validateErrors", downloadGeraFiles, tracker);
                 } else if (data.includes("'status': 'error'") || data.includes('"status": "error"')) {
-                    console.log("Error signal detected!");
-                    validateBox.innerText += "\n✗ Validation failed!\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
                     eventSource.close();
-                } else {
-                    // Regular log line
-                    validateBox.innerText += data + "\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
+                    fetchAndRenderErrors("gera", "validateErrors", downloadGeraFiles, tracker);
                 }
             };
-            eventSource.onerror = function(error) {
-                console.error("EventSource error:", error);
+            eventSource.onerror = function () {
                 eventSource.close();
+                tracker.onClose();
             };
         }
 
         function downloadGeraFiles() {
-            console.log("downloadGeraFiles() called");
-            const validateBox = document.getElementById("validate");
-            validateBox.innerText += "Starting download request...\n";
-            validateBox.scrollTop = validateBox.scrollHeight;
-            
+            const tracker = validateTracker;
+            if (tracker) tracker.note("Iniciando descarga…");
+
             fetch("/download-gera-files")
                 .then(response => {
-                    console.log("Download response status:", response.status);
-                    
-                    // Handle 401 Unauthorized
                     if (response.status === 401) {
                         window.location.href = "/login";
                         throw new Error("Session expired. Redirecting to login...");
                     }
-                    
                     if (!response.ok) {
                         return response.json().then(data => {
                             throw new Error(data.message || "Download failed");
-                        }).catch(parseError => {
-                            // If response is not JSON (HTML error page), show generic error
+                        }).catch(() => {
                             throw new Error("Server error: " + response.status);
                         });
                     }
                     return response.blob();
                 })
                 .then(blob => {
-                    console.log("Blob received, size:", blob.size);
-                    // Create download link
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
@@ -180,56 +524,913 @@
                     a.click();
                     window.URL.revokeObjectURL(url);
                     a.remove();
-                    
-                    validateBox.innerText += "✓ Files downloaded successfully!\n";
-                    validateBox.scrollTop = validateBox.scrollHeight;
+                    if (tracker) tracker.note("✓ Archivos descargados.");
                 })
                 .catch(error => {
-                    console.error("Download error:", error);
-                    validateBox.innerText += `\n✗ Download error: ${error.message}\n`;
-                    validateBox.scrollTop = validateBox.scrollHeight;
+                    if (tracker) tracker.note("✗ Error de descarga: " + error.message);
                 });
         }
 
-        function startUploadStream() {
-            const validateBox = document.getElementById("validate");
-            validateBox.innerText += "\nStarting upload...\n";
-            const eventSource = new EventSource("/stream-upload");
-            eventSource.onmessage = function(event) {
-                validateBox.innerText += event.data + "\n";
-                validateBox.scrollTop = validateBox.scrollHeight;
-            };
-            eventSource.onerror = function() {
-                eventSource.close();
-            };
+        function downloadRefreshFiles() {
+            const tracker = refreshTracker;
+            if (tracker) tracker.note("Descargando archivos de error del refresh…");
+
+            fetch("/download-refresh-files")
+                .then(response => {
+                    if (response.status === 401) {
+                        window.location.href = "/login";
+                        throw new Error("Session expired. Redirecting to login...");
+                    }
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            throw new Error(data.message || "Download failed");
+                        }).catch(() => {
+                            throw new Error("Server error: " + response.status);
+                        });
+                    }
+                    return response.blob();
+                })
+                .then(blob => {
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = "refresh_errors.zip";
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    a.remove();
+                    if (tracker) tracker.note("✓ Archivos de error descargados.");
+                })
+                .catch(error => {
+                    if (tracker) tracker.note("✗ Error de descarga: " + error.message);
+                });
         }
 
-        function startRefreshStream() {
+        async function startUploadStream() {
             if (!selectedId) {
-                alert("Please select a client first.");
+                alert("Seleccioná un cliente primero.");
                 return;
             }
-            else {console.log(selectedId)}
-            const refreshBox = document.getElementById("result");
-            refreshBox.innerText = "";
-            const eventSource = new EventSource("/stream-refresh?selectedId=" + selectedId);
-            eventSource.onmessage = function(event) {
-                refreshBox.innerText += event.data + "\n";
-                // Auto-scroll to bottom
-                refreshBox.scrollTop = refreshBox.scrollHeight;
+            if (!requireAwsSso()) return;
+            if (!(await acquireClientLock(selectedId, "upload"))) return;
+            validateTracker = new ProcessTracker(document.getElementById("validatePanel"), FLOWS.upload);
+            const tracker = validateTracker;
+            const eventSource = new EventSource("/stream-upload?selectedId=" + selectedId);
+            eventSource.onmessage = function (event) {
+                tracker.pushLine(event.data);
             };
-            eventSource.onerror = function() {
+            eventSource.onerror = function () {
                 eventSource.close();
+                tracker.onClose();
             };
-
         }
 
-        // Drag and Drop functionality
+        async function startRefreshStream() {
+            if (!selectedId) {
+                alert("Seleccioná un cliente primero.");
+                return;
+            }
+            if (!requireAwsSso()) return;
+            if (!(await acquireClientLock(selectedId, "refresh"))) return;
+            refreshTracker = new ProcessTracker(document.getElementById("refreshPanel"), FLOWS.refresh);
+            const tracker = refreshTracker;
+            resetPdfReport();
+            resetErrorReports("refreshErrors");
+            const eventSource = new EventSource("/stream-refresh?selectedId=" + selectedId);
+            const PDF_MARKER = "__PDF_REPORT__:";
+            eventSource.onmessage = function (event) {
+                const data = event.data;
+                if (data.indexOf(PDF_MARKER) === 0) {
+                    // Reporte de búsqueda/subida de PDFs: lo mostramos en su panel
+                    // dedicado y no lo volcamos al log crudo.
+                    try { renderPdfReport(JSON.parse(data.slice(PDF_MARKER.length))); }
+                    catch (err) { console.error("PDF report parse error:", err); }
+                    return;
+                }
+                tracker.pushLine(data);
+                if (data.includes("Proceso completado exitosamente")) {
+                    eventSource.close();
+                    fetchAndRenderErrors("refresh", "refreshErrors", downloadRefreshFiles, tracker);
+                    refreshPdfCounts();
+                    if (unmatchedOpenId) { const reopen = unmatchedOpenId; unmatchedOpenId = null; toggleUnmatched(reopen); }
+                }
+            };
+            eventSource.onerror = function () {
+                eventSource.close();
+                tracker.onClose();
+            };
+        }
+
+        function resetPdfReport() {
+            const box = document.getElementById("pdfReport");
+            if (!box) return;
+            box.hidden = true;
+            box.textContent = "";
+            box.removeAttribute("data-state");
+        }
+
+        // Renderiza el reporte del paso de búsqueda/subida de PDFs desde Drive.
+        // Los archivos "sin match" se listan para que el usuario los busque a mano.
+        function renderPdfReport(report) {
+            const box = document.getElementById("pdfReport");
+            if (!box) return;
+            box.textContent = "";
+
+            const unmatched = Array.isArray(report.unmatched) ? report.unmatched : [];
+            box.hidden = false;
+            box.setAttribute("data-state", unmatched.length ? "warn" : "ok");
+
+            const title = document.createElement("div");
+            title.className = "pdf-report-title";
+            title.textContent = unmatched.length
+                ? "⚠️ PDFs no encontrados en Drive — buscar a mano"
+                : "✓ PDFs: todos los archivos fueron encontrados";
+            box.appendChild(title);
+
+            const summary = document.createElement("div");
+            summary.className = "pdf-report-summary";
+            summary.textContent =
+                "Subidos desde Drive: " + (report.uploaded || 0) +
+                " · Ya en el bucket: " + (report.already || 0) +
+                " · Errores de subida: " + (report.errors || 0) +
+                " · Sin match: " + unmatched.length;
+            box.appendChild(summary);
+
+            if (unmatched.length) {
+                const list = document.createElement("ul");
+                list.className = "pdf-report-list";
+                unmatched.forEach(function (item) {
+                    const li = document.createElement("li");
+                    const name = document.createElement("span");
+                    name.className = "pdf-report-file";
+                    name.textContent = item.filename || "(sin nombre)";
+                    li.appendChild(name);
+                    const meta = document.createElement("span");
+                    meta.className = "pdf-report-meta";
+                    meta.textContent =
+                        " — " + (item.service || "") +
+                        " · sitio " + (item.siteCode || "?") +
+                        " · " + (item.supplier || "?") +
+                        " · cuenta " + (item.accountNumber || "?");
+                    li.appendChild(meta);
+                    list.appendChild(li);
+                });
+                box.appendChild(list);
+            }
+        }
+
+        /* =====================================================================
+           Reportes de error expandibles (flujos refresh y gera/just_all).
+           El backend (/run-errors/<flow>) devuelve cada .json parseado; acá se
+           renderiza un <details> por archivo, eligiendo el render según la forma
+           del JSON, con fallback genérico para los tipos que todavía no parseamos.
+           ===================================================================== */
+        const ERR_MAX_ROWS = 500;
+
+        function resetErrorReports(containerId) {
+            const c = document.getElementById(containerId);
+            if (!c) return;
+            c.hidden = true;
+            c.textContent = "";
+        }
+
+        // Comparación de métricas de validación (gera.py) vs. lo que hay hoy en producción
+        // (production_metrics.json, que solo escribe el flujo de Upload). Ver __GERA_METRICS__.
+        const METRICS_SERVICE_LABELS = { agua: "Agua", electricidad: "Electricidad", gas: "Gas", residuo: "Residuos", combustible: "Combustibles", otro: "Otros" };
+        const METRICS_LABELS = { count: "Líneas", consumption: "Consumo", netCost: "Costo neto", brutCost: "Costo bruto" };
+
+        function fmtMetricNumber(n) {
+            return typeof n === "number" ? n.toLocaleString("es-AR", { maximumFractionDigits: 2 }) : n;
+        }
+
+        function renderMetricsDiff(diff) {
+            const container = document.getElementById("validationMetrics");
+            if (!container) return;
+            container.hidden = false;
+            container.textContent = "";
+
+            const rows = [];
+            Object.keys(METRICS_SERVICE_LABELS).forEach(service => {
+                const metrics = diff[service];
+                if (!metrics) return;
+                Object.keys(metrics).forEach(metric => rows.push({ service, metric, ...metrics[metric] }));
+            });
+
+            const head = document.createElement("div");
+            head.className = "err-reports-head";
+            const title = document.createElement("span");
+            title.className = "err-reports-title";
+            title.textContent = "Comparación contra producción";
+            head.appendChild(title);
+            container.appendChild(head);
+
+            if (!rows.length) {
+                const p = document.createElement("div");
+                p.className = "err-reports-empty";
+                p.textContent = "No se pudieron calcular métricas de validación.";
+                container.appendChild(p);
+                return;
+            }
+
+            const table = document.createElement("table");
+            table.className = "metrics-diff-table";
+            table.innerHTML = "<thead><tr><th>Servicio</th><th>Métrica</th><th>Validado</th><th>Producción</th><th>Δ</th></tr></thead><tbody>" +
+                rows.map(r => `<tr class="${r.delta !== 0 ? "metrics-diff-changed" : ""}">` +
+                    `<td>${METRICS_SERVICE_LABELS[r.service]}</td>` +
+                    `<td>${METRICS_LABELS[r.metric] || r.metric}</td>` +
+                    `<td>${fmtMetricNumber(r.actual)}</td>` +
+                    `<td>${fmtMetricNumber(r.produccion)}</td>` +
+                    `<td>${r.delta > 0 ? "+" : ""}${fmtMetricNumber(r.delta)}</td></tr>`).join("") +
+                "</tbody>";
+            container.appendChild(table);
+        }
+
+        // Listado expandible de facturas sin PDF del cliente clickeado (máx. 10 + "Ver todas").
+        const UNMATCHED_PREVIEW = 10;
+        let unmatchedOpenId = null;
+
+        function toggleUnmatched(id) {
+            const panel = document.getElementById("unmatchedPanel");
+            if (!panel) return;
+            if (unmatchedOpenId === id) {
+                unmatchedOpenId = null;
+                panel.hidden = true;
+                panel.textContent = "";
+                return;
+            }
+            unmatchedOpenId = id;
+            const box = document.getElementById(id);
+            const token = (box.getAttribute("data-token") || "").trim().toLowerCase();
+            const name = box.querySelector(".box-name").textContent.trim();
+            panel.hidden = false;
+            panel.setAttribute("data-state", "idle");
+            panel.textContent = "Cargando facturas sin PDF…";
+            fetch("/pdf-unmatched/" + encodeURIComponent(token))
+                .then(function (r) {
+                    if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
+                    return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status));
+                })
+                .then(function (payload) {
+                    if (unmatchedOpenId === id) renderUnmatched(panel, name, payload);
+                })
+                .catch(function (err) {
+                    if (unmatchedOpenId !== id) return;
+                    panel.textContent = "No se pudo cargar el listado: " + err.message;
+                });
+        }
+
+        function renderUnmatched(panel, name, payload) {
+            panel.textContent = "";
+            const items = Array.isArray(payload.items) ? payload.items : [];
+            panel.setAttribute("data-state", items.length ? "warn" : "ok");
+
+            const title = document.createElement("div");
+            title.className = "pdf-report-title";
+            title.textContent = !payload.available
+                ? name + ": sin datos todavía"
+                : items.length
+                    ? "⚠️ " + name + ": facturas sin PDF asociado (" + items.length + ")"
+                    : "✓ " + name + ": todas las facturas tienen PDF asociado";
+            panel.appendChild(title);
+
+            const summary = document.createElement("div");
+            summary.className = "pdf-report-summary";
+            summary.textContent = payload.available
+                ? "Último refresh: " + (payload.updatedAt || "?").replace("T", " ")
+                : "El listado se genera al terminar el próximo refresh de este cliente.";
+            panel.appendChild(summary);
+            if (!items.length) return;
+
+            const list = document.createElement("ul");
+            list.className = "pdf-report-list";
+            panel.appendChild(list);
+
+            const toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "unmatched-toggle";
+            let expanded = false;
+
+            function paint() {
+                list.textContent = "";
+                (expanded ? items : items.slice(0, UNMATCHED_PREVIEW)).forEach(function (item) {
+                    const li = document.createElement("li");
+                    const file = document.createElement("span");
+                    file.className = "pdf-report-file";
+                    file.textContent = item.filename || "(sin nombre)";
+                    li.appendChild(file);
+                    const meta = document.createElement("span");
+                    meta.className = "pdf-report-meta";
+                    meta.textContent =
+                        " — " + (item.service || "") +
+                        " · sitio " + (item.siteCode || "?") +
+                        " · " + (item.supplier || "?") +
+                        " · cuenta " + (item.accountNumber || "?");
+                    li.appendChild(meta);
+                    list.appendChild(li);
+                });
+                list.style.maxHeight = expanded ? "420px" : "none";
+                toggle.textContent = expanded ? "Ver menos" : "Ver todas (" + items.length + ")";
+            }
+            toggle.onclick = function () { expanded = !expanded; paint(); };
+            paint();
+            if (items.length > UNMATCHED_PREVIEW) panel.appendChild(toggle);
+        }
+
+        // Actualiza en vivo el contador de PDFs sin matchear en cada botón de cliente.
+        function refreshPdfCounts() {
+            fetch("/pdf-unmatched-counts")
+                .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error("HTTP " + r.status)); })
+                .then(function (payload) {
+                    const counts = (payload && payload.counts) || {};
+                    document.querySelectorAll(".pdf-count-badge").forEach(function (badge) {
+                        const token = (badge.getAttribute("data-token") || "").trim().toLowerCase();
+                        const entry = counts[token];
+                        if (entry && typeof entry.count === "number") {
+                            badge.textContent = entry.count;
+                            badge.hidden = false;
+                            badge.classList.toggle("zero", entry.count === 0);
+                            badge.title = "PDFs sin matchear en este entorno" +
+                                (entry.updatedAt ? " (actualizado " + entry.updatedAt + ")" : "");
+                        }
+                    });
+                })
+                .catch(function () { /* silencioso: si falla, se mantiene lo renderizado */ });
+        }
+
+        function fetchAndRenderErrors(flow, containerId, downloadFn, tracker) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            // pequeño delay para asegurar que los .json terminaron de escribirse
+            setTimeout(function () {
+                fetch("/run-errors/" + flow)
+                    .then(function (r) {
+                        if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
+                        if (!r.ok) throw new Error("HTTP " + r.status);
+                        return r.json();
+                    })
+                    .then(function (payload) {
+                        const files = (payload && payload.files) || [];
+                        renderErrorReports(container, files, downloadFn);
+                        if (tracker) tracker.note(files.length
+                            ? ("Reportes cargados: " + files.length + " archivo(s).")
+                            : "No hay reportes para mostrar (podés descargar el .zip igual).");
+                    })
+                    .catch(function (err) {
+                        container.hidden = false;
+                        container.textContent = "";
+                        const p = document.createElement("div");
+                        p.className = "err-reports-empty";
+                        p.textContent = "No se pudieron cargar los reportes de error: " + err.message;
+                        container.appendChild(p);
+                        if (downloadFn) {
+                            const btn = document.createElement("button");
+                            btn.type = "button";
+                            btn.className = "err-download-btn";
+                            btn.textContent = "Descargar .zip";
+                            btn.onclick = downloadFn;
+                            container.appendChild(btn);
+                        }
+                        if (tracker) tracker.note("No se pudieron cargar los reportes: " + err.message);
+                    });
+            }, 300);
+        }
+
+        function renderErrorReports(container, files, downloadFn) {
+            container.hidden = false;
+            container.textContent = "";
+
+            const head = document.createElement("div");
+            head.className = "err-reports-head";
+            const title = document.createElement("span");
+            title.className = "err-reports-title";
+            const withIssues = files.filter(function (f) { return errorCount(f) > 0; }).length;
+            title.textContent = files.length
+                ? ("Reportes de error — " + files.length + " archivo" + (files.length === 1 ? "" : "s") +
+                   ", " + withIssues + " con observaciones")
+                : "No hay reportes para mostrar en pantalla (los archivos ignorados van igual en el .zip).";
+            head.appendChild(title);
+
+            if (downloadFn) {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.className = "err-download-btn";
+                btn.textContent = "Descargar .zip";
+                btn.onclick = downloadFn;
+                head.appendChild(btn);
+            }
+            container.appendChild(head);
+
+            // Grilla de 2 columnas (1 en pantallas angostas): un div por .json.
+            const grid = document.createElement("div");
+            grid.className = "err-grid";
+            files.forEach(function (f) {
+                try { grid.appendChild(buildErrorCard(f)); }
+                catch (e) { console.error("Error renderizando", f.name, e); }
+            });
+            container.appendChild(grid);
+        }
+
+        function errorCount(file) {
+            const d = file.data;
+            if (!d) return 0;
+            if (d.__parse_error__) return 1;
+            if (Array.isArray(d)) return d.length;
+            if (Array.isArray(d.result)) return d.result.length;                       // overlap_check
+            if (Array.isArray(d.noMatchDocsFiles) || Array.isArray(d.noMatchBucketFiles))
+                return (d.noMatchDocsFiles ? d.noMatchDocsFiles.length : 0) +
+                       (d.noMatchBucketFiles ? d.noMatchBucketFiles.length : 0);        // invoice_files
+            if (d.count && typeof d.count.files_deleted === "number") return d.count.files_deleted; // deleted_keys
+            if (d.errors && d.errors.misc) return 1;
+            return 0;
+        }
+
+        function buildErrorCard(file) {
+            const n = errorCount(file);
+            const details = document.createElement("details");
+            details.className = "err-card";
+            details.setAttribute("data-state", n > 0 ? "warn" : "ok");
+
+            const summary = document.createElement("summary");
+            const label = document.createElement("span");
+            label.className = "err-card-label";
+            label.textContent = file.label || file.name;
+            summary.appendChild(label);
+            const badge = document.createElement("span");
+            badge.className = "err-card-badge";
+            badge.textContent = n > 0 ? (n + " obs.") : "sin observaciones";
+            summary.appendChild(badge);
+            const fname = document.createElement("span");
+            fname.className = "err-card-file";
+            fname.textContent = file.name;
+            summary.appendChild(fname);
+            details.appendChild(summary);
+
+            const body = document.createElement("div");
+            body.className = "err-card-body";
+            renderErrorBody(body, file);
+            details.appendChild(body);
+            return details;
+        }
+
+        function renderErrorBody(body, file) {
+            const d = file.data;
+            if (!d) { errNote(body, "(archivo vacío)"); return; }
+            if (d.__parse_error__) { errNote(body, "No se pudo parsear el archivo: " + d.__parse_error__); return; }
+
+            if (d.metadata && (Array.isArray(d.noMatchDocsFiles) || Array.isArray(d.noMatchBucketFiles)))
+                return renderInvoiceFiles(body, d);
+            if (d.count && (Array.isArray(d.deleted) || Array.isArray(d.missing)))
+                return renderDeletedKeys(body, d);
+            if (Array.isArray(d.result))
+                return renderOverlap(body, d);
+            if (d.errors && d.errors.misc) {
+                errNote(body, d.errors.misc);
+                if (d.metadata && d.metadata.totals) errKeyValues(body, d.metadata.totals, INVOICE_TOTALS_LABELS);
+                return;
+            }
+            if (Array.isArray(d)) {
+                if (d.length === 0) { errNote(body, "Sin observaciones."); return; }
+                if (d[0] && d[0].errInfo !== undefined) return renderDbErrors(body, d);
+                if (d[0] && d[0].message !== undefined) return renderRowErrors(body, d);
+                return renderGeneric(body, d);
+            }
+            return renderGeneric(body, d);
+        }
+
+        /* ---- Sub-renderers por forma ---- */
+
+        const INVOICE_TOTALS_LABELS = {
+            queryErrors: "Errores de query", filenameErrors: "Errores de nombre",
+            noMatchBucketFiles: "Archivos bucket sin match", bucketFiles: "Archivos en bucket",
+            matchDocsDb: "Facturas vinculadas", noMatchDocsDb: "Facturas sin archivo",
+            totalDocsDb: "Facturas totales"
+        };
+        const DELETED_COUNT_LABELS = {
+            files_found: "Archivos en bucket", files_validated: "Vinculados (se conservan)",
+            files_deleted: "Borrados", files_missing: "Facturas sin archivo"
+        };
+
+        function renderRowErrors(body, arr) {
+            const cols = [];
+            if (arr.some(function (e) { return e.row !== undefined; })) cols.push(["row", "Fila"]);
+            if (arr.some(function (e) { return e.path !== undefined; })) cols.push(["path", "Campo"]);
+            if (arr.some(function (e) { return e.value !== undefined; })) cols.push(["value", "Valor"]);
+            cols.push(["message", "Mensaje"]);
+            body.appendChild(errTable(cols, arr));
+            errMore(body, arr.length);
+        }
+
+        function renderDbErrors(body, arr) {
+            const list = document.createElement("div");
+            list.className = "err-dblist";
+            arr.slice(0, ERR_MAX_ROWS).forEach(function (item) {
+                const row = document.createElement("div");
+                row.className = "err-dbitem";
+                const msg = document.createElement("div");
+                msg.className = "err-dbmsg";
+                msg.textContent = (typeof item.errInfo === "string")
+                    ? item.errInfo
+                    : "Error de validación (ver detalle técnico)";
+                row.appendChild(msg);
+                const ctxBits = [];
+                if (item.row !== undefined) ctxBits.push("fila " + item.row);
+                if (item.site && item.site.name) ctxBits.push("sitio " + item.site.name);
+                if (item.organization && item.organization.nombre) ctxBits.push("org " + item.organization.nombre);
+                if (item.toSearch) ctxBits.push("buscado: " + item.toSearch);
+                if (ctxBits.length) {
+                    const ctx = document.createElement("div");
+                    ctx.className = "err-dbctx";
+                    ctx.textContent = ctxBits.join(" · ");
+                    row.appendChild(ctx);
+                }
+                if (typeof item.errInfo !== "string" && item.errInfo !== undefined) {
+                    row.appendChild(errDetailPre("Ver detalle técnico", item.errInfo));
+                }
+                list.appendChild(row);
+            });
+            body.appendChild(list);
+            errMore(body, arr.length);
+        }
+
+        function renderInvoiceFiles(body, d) {
+            if (d.metadata && d.metadata.totals) errKeyValues(body, d.metadata.totals, INVOICE_TOTALS_LABELS);
+            if (Array.isArray(d.noMatchDocsFiles) && d.noMatchDocsFiles.length)
+                body.appendChild(errList("Facturas sin archivo en el bucket", d.noMatchDocsFiles));
+            if (Array.isArray(d.noMatchBucketFiles) && d.noMatchBucketFiles.length)
+                body.appendChild(errList("Archivos del bucket sin factura", d.noMatchBucketFiles));
+            if (d.errors) {
+                if (Array.isArray(d.errors.query) && d.errors.query.length)
+                    body.appendChild(errList("Errores de query", d.errors.query));
+                if (Array.isArray(d.errors.filename) && d.errors.filename.length)
+                    body.appendChild(errList("Errores de nombre de archivo", d.errors.filename));
+            }
+            if (!body.childNodes.length) errNote(body, "Sin observaciones.");
+        }
+
+        function renderDeletedKeys(body, d) {
+            if (d.count) errKeyValues(body, d.count, DELETED_COUNT_LABELS);
+            if (Array.isArray(d.deleted) && d.deleted.length)
+                body.appendChild(errList("Archivos borrados del bucket", d.deleted));
+            if (Array.isArray(d.missing) && d.missing.length) {
+                const rows = d.missing.map(function (m) {
+                    return {
+                        siteCode: m.siteCode, supplier: m.supplier,
+                        accountNumber: m.accountNumber, endPeriod: m.endPeriod, indicator: m.indicator
+                    };
+                });
+                const cols = [["siteCode", "Sitio"], ["supplier", "Distribuidora"],
+                              ["accountNumber", "Cuenta"], ["endPeriod", "Período"], ["indicator", "Indicador"]];
+                const wrap = document.createElement("div");
+                errHeading(wrap, "Facturas sin archivo");
+                wrap.appendChild(errTable(cols, rows));
+                body.appendChild(wrap);
+            }
+        }
+
+        function renderOverlap(body, d) {
+            if (d.metadata && typeof d.metadata.total === "number")
+                errNote(body, "Total de superposiciones: " + d.metadata.total);
+            const cols = [["siteCode", "Sitio"], ["supplier", "Distribuidora"], ["accountNumber", "Cuenta"],
+                          ["service", "Servicio"], ["message", "Detalle"]];
+            body.appendChild(errTable(cols, d.result || []));
+            errMore(body, (d.result || []).length);
+        }
+
+        function renderGeneric(body, data) {
+            body.appendChild(errDetailPre("Ver contenido (JSON)", data, true));
+        }
+
+        /* ---- Helpers de UI ---- */
+
+        function errNote(body, text) {
+            const p = document.createElement("p");
+            p.className = "err-note";
+            p.textContent = text;
+            body.appendChild(p);
+        }
+
+        function errHeading(parent, text) {
+            const h = document.createElement("div");
+            h.className = "err-heading";
+            h.textContent = text;
+            parent.appendChild(h);
+        }
+
+        function errKeyValues(body, obj, labels) {
+            const grid = document.createElement("div");
+            grid.className = "err-kv";
+            Object.keys(obj).forEach(function (k) {
+                const cell = document.createElement("div");
+                cell.className = "err-kv-cell";
+                const key = document.createElement("span");
+                key.className = "err-kv-key";
+                key.textContent = (labels && labels[k]) ? labels[k] : k;
+                const val = document.createElement("span");
+                val.className = "err-kv-val";
+                val.textContent = String(obj[k]);
+                cell.appendChild(key);
+                cell.appendChild(val);
+                grid.appendChild(cell);
+            });
+            body.appendChild(grid);
+        }
+
+        function errList(title, items) {
+            const wrap = document.createElement("div");
+            errHeading(wrap, title + " (" + items.length + ")");
+            const ul = document.createElement("ul");
+            ul.className = "err-list";
+            items.slice(0, ERR_MAX_ROWS).forEach(function (it) {
+                const li = document.createElement("li");
+                li.textContent = (typeof it === "string") ? it : JSON.stringify(it);
+                ul.appendChild(li);
+            });
+            wrap.appendChild(ul);
+            errMore(wrap, items.length);
+            return wrap;
+        }
+
+        function errTable(cols, rows) {
+            const wrap = document.createElement("div");
+            wrap.className = "err-table-wrap";
+            const table = document.createElement("table");
+            table.className = "err-table";
+            const thead = document.createElement("thead");
+            const htr = document.createElement("tr");
+            cols.forEach(function (c) {
+                const th = document.createElement("th");
+                th.textContent = c[1];
+                htr.appendChild(th);
+            });
+            thead.appendChild(htr);
+            table.appendChild(thead);
+            const tbody = document.createElement("tbody");
+            rows.slice(0, ERR_MAX_ROWS).forEach(function (r) {
+                const tr = document.createElement("tr");
+                cols.forEach(function (c) {
+                    const td = document.createElement("td");
+                    const v = r[c[0]];
+                    td.textContent = (v === undefined || v === null || v === "") ? "—" : String(v);
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            wrap.appendChild(table);
+            return wrap;
+        }
+
+        function errMore(parent, total) {
+            if (total > ERR_MAX_ROWS) {
+                const p = document.createElement("p");
+                p.className = "err-note";
+                p.textContent = "… y " + (total - ERR_MAX_ROWS) + " más (ver el .zip para el detalle completo).";
+                parent.appendChild(p);
+            }
+        }
+
+        function errDetailPre(label, data, pretty) {
+            const det = document.createElement("details");
+            det.className = "err-json";
+            const sum = document.createElement("summary");
+            sum.textContent = label;
+            det.appendChild(sum);
+            const pre = document.createElement("pre");
+            try { pre.textContent = JSON.stringify(data, null, pretty ? 2 : 0).slice(0, 20000); }
+            catch (e) { pre.textContent = String(data); }
+            det.appendChild(pre);
+            return det;
+        }
+
+        function importFromSheets() {
+            if (!selectedId) {
+                alert("Seleccioná un cliente primero.");
+                return;
+            }
+            resetDownstreamButtons();
+            validateTracker = new ProcessTracker(document.getElementById("validatePanel"), {
+                title: "Importar desde Google Sheets",
+                steps: [{ label: "Descargando y guardando planilla", match: [] }],
+                success: [],
+                error: []
+            });
+            const tracker = validateTracker;
+            tracker._advanceTo(0);
+
+            fetch("/import-from-sheets", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ selected_id: selectedId })
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    window.location.href = "/login";
+                    throw new Error("Session expired");
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.status === "accepted") {
+                    tracker.note(data.message);
+                    pollImportStatus(data.job_id, tracker);
+                    return;
+                }
+
+                if (data.status === "success") {
+                    tracker.note(data.message);
+                    tracker.note("Carpeta lista: " + data.folder + "/" + data.file);
+                    tracker.succeed();
+                    tracker.note('Ahora podés hacer click en "Validate".');
+                    return;
+                }
+
+                tracker.fail(data.message || "No se pudo iniciar la importación.");
+            })
+            .catch(error => {
+                tracker.fail("Error: " + error.message);
+            });
+        }
+
+        function pollImportStatus(jobId, tracker) {
+            const poll = () => {
+                fetch("/import-from-sheets/status/" + jobId)
+                    .then(response => {
+                        if (response.status === 401) {
+                            window.location.href = "/login";
+                            throw new Error("Session expired");
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.status === "queued" || data.status === "running") {
+                            tracker.note(data.message || "Importación en progreso...");
+                            setTimeout(poll, 3000);
+                            return;
+                        }
+
+                        if (data.status === "success") {
+                            tracker.note(data.message);
+                            tracker.note("Carpeta lista: " + data.folder + "/" + data.file);
+                            tracker.succeed();
+                            tracker.note('Ahora podés hacer click en "Validate".');
+                            return;
+                        }
+
+                        tracker.fail(data.message || "La importación falló.");
+                    })
+                    .catch(error => {
+                        tracker.fail("Error: " + error.message);
+                    });
+            };
+
+            poll();
+        }
+
+        function loadBranchStatus() {
+            const branchStatus = document.getElementById("branchStatus");
+
+            fetch("/branch-status")
+                .then(response => {
+                    if (response.status === 401) {
+                        window.location.href = "/login";
+                        throw new Error("Session expired");
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.status !== "success") {
+                        throw new Error(data.message || "No se pudo leer la versión.");
+                    }
+                    branchStatus.innerText = `Versión actual del patron: ${data.version} (${data.branch})`;
+                })
+                .catch(error => {
+                    branchStatus.innerText = "Versión actual del patron: desconocida";
+                    console.error("Branch status error:", error);
+                });
+        }
+
+        // Antes de correr Validate (gera), asegura que el repo esté en la rama de
+        // patron configurada para el cliente seleccionado (ver client_branches.json).
+        // Si ya está en esa rama no hace nada; si no, la cambia.
+        async function ensureClientBranch(clientId) {
+            const branchStatus = document.getElementById("branchStatus");
+            branchStatus.innerText = "Verificando rama del patron...";
+
+            const response = await fetch("/ensure-client-branch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ selected_id: clientId })
+            });
+            if (response.status === 401) {
+                window.location.href = "/login";
+                throw new Error("Session expired");
+            }
+            const data = await response.json();
+            if (data.status !== "success") {
+                branchStatus.innerText = "Versión actual del patron: desconocida";
+                throw new Error(data.message || "No se pudo verificar la rama del patron.");
+            }
+            branchStatus.innerText = `Versión actual del patron: ${data.version} (${data.branch})`;
+        }
+
+        // ===== Sesión SSO de AWS =====
+        // "Actualizar" y "Upload" corren comandos (match_query, invoice_files_clean,
+        // bucket_files_sync) que fallan sin una sesión SSO activa del profile "Tomi".
+        // awsSsoActive refleja el último status conocido (poll cada 15s); startAwsLogin
+        // abre el flujo de device-code (aws sso login) igual que en pipeline execution.
+        let awsSsoActive = false;
+        let awsLoginPolling = null;
+
+        function setAwsPill(stateClass, text) {
+            const pill = document.getElementById("awsSsoPill");
+            pill.className = "aws-pill " + stateClass;
+            pill.textContent = text;
+        }
+
+        function refreshAwsStatus() {
+            return fetch("/aws-sso/status")
+                .then(response => response.ok ? response.json() : Promise.reject(new Error("HTTP " + response.status)))
+                .then(data => {
+                    awsSsoActive = !!data.active;
+                    setAwsPill(awsSsoActive ? "active" : "inactive", awsSsoActive ? "AWS: sesión activa" : "AWS: sin sesión");
+                })
+                .catch(() => {
+                    awsSsoActive = false;
+                    setAwsPill("inactive", "AWS: sin datos");
+                });
+        }
+
+        function pollAwsLogin() {
+            fetch("/aws-sso/login/status")
+                .then(response => response.json())
+                .then(data => {
+                    const modalMsg = document.getElementById("awsModalMessage");
+                    const link = document.getElementById("awsModalLink");
+                    const code = document.getElementById("awsModalCode");
+                    if (data.url) { link.href = data.url; link.textContent = data.url; }
+                    if (data.code) { code.textContent = data.code; }
+
+                    if (data.phase === "awaiting") {
+                        modalMsg.textContent = "Abrí el link y confirmá el código para continuar.";
+                    } else if (data.phase === "refreshing") {
+                        modalMsg.textContent = "Login OK, actualizando credenciales...";
+                    } else if (data.phase === "completed") {
+                        modalMsg.textContent = "¡Listo! Sesión SSO activa.";
+                        clearInterval(awsLoginPolling);
+                        awsLoginPolling = null;
+                        refreshAwsStatus();
+                    } else if (data.phase === "failed") {
+                        modalMsg.textContent = "Error: " + (data.message || "el login falló.");
+                        clearInterval(awsLoginPolling);
+                        awsLoginPolling = null;
+                    } else {
+                        modalMsg.textContent = "Iniciando login...";
+                    }
+                })
+                .catch(() => {});
+        }
+
+        function startAwsLogin() {
+            document.getElementById("awsSsoModal").hidden = false;
+            document.getElementById("awsModalMessage").textContent = "Iniciando login...";
+            document.getElementById("awsModalLink").textContent = "";
+            document.getElementById("awsModalLink").href = "#";
+            document.getElementById("awsModalCode").textContent = "";
+
+            fetch("/aws-sso/login", { method: "POST" }).catch(() => {});
+            if (awsLoginPolling) clearInterval(awsLoginPolling);
+            awsLoginPolling = setInterval(pollAwsLogin, 2000);
+            pollAwsLogin();
+        }
+
+        document.getElementById("awsSsoPill").addEventListener("click", () => {
+            if (awsSsoActive) { refreshAwsStatus(); return; }
+            startAwsLogin();
+        });
+        document.getElementById("awsModalClose").addEventListener("click", () => {
+            document.getElementById("awsSsoModal").hidden = true;
+        });
+
+        // Guard reusado por "Actualizar" y "Upload": si no hay sesión SSO activa, bloquea
+        // el flujo (los comandos AWS que corren fallarían) y avisa dónde iniciarla.
+        function requireAwsSso() {
+            if (awsSsoActive) return true;
+            alert('No hay sesión SSO de AWS activa: este flujo usa comandos que necesitan AWS (match_query, etc.). Iniciá sesión con el botón "AWS" arriba a la derecha y volvé a intentar.');
+            return false;
+        }
+
+        window.addEventListener("DOMContentLoaded", () => {
+            loadBranchStatus();
+            refreshAwsStatus();
+            setInterval(refreshAwsStatus, 15000);
+            connectLocksStream();
+        });
+
+        // ===== Drag and Drop de archivos Excel =====
         const dropZone = document.getElementById("dropZone");
         const fileInput = document.getElementById("fileInput");
         let selectedFiles = new DataTransfer();
 
-        // Prevent default drag behaviors
         ["dragenter", "dragover", "dragleave", "drop"].forEach(eventName => {
             dropZone.addEventListener(eventName, preventDefaults, false);
         });
@@ -239,7 +1440,6 @@
             e.stopPropagation();
         }
 
-        // Highlight drop zone when dragging over it
         ["dragenter", "dragover"].forEach(eventName => {
             dropZone.addEventListener(eventName, () => {
                 dropZone.classList.add("drag-over");
@@ -252,76 +1452,76 @@
             }, false);
         });
 
-        // Handle dropped files
         dropZone.addEventListener("drop", handleDrop, false);
 
         function handleDrop(e) {
             const dt = e.dataTransfer;
-            const files = dt.files;
-            handleFiles(files);
+            handleFiles(dt.files);
         }
 
         function handleFiles(files) {
-            const validateBox = document.getElementById("validate");
-            validateBox.innerText = "";
+            if (!selectedId) {
+                alert("Seleccioná un cliente primero.");
+                return;
+            }
             selectedFiles = new DataTransfer();
+            const rejected = [];
 
             for (let file of files) {
-                // Check if file is an Excel file
                 const isExcelFile = /\.(xlsx?|csv)$/i.test(file.name);
-                
                 if (isExcelFile) {
                     selectedFiles.items.add(file);
-                    const msg = `✓ File selected: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`;
-                    console.log(msg);
-                    validateBox.innerText += msg + "\n";
                 } else {
-                    const msg = `✗ File rejected: ${file.name} - Only Excel (.xlsx, .xls) and CSV files are allowed`;
-                    console.log(msg);
-                    validateBox.innerText += msg + "\n";
+                    rejected.push(file.name);
                 }
             }
 
-            // Auto-load valid files
             if (selectedFiles.files.length > 0) {
-                validateBox.innerText += "\nLoading files...\n";
-                uploadFilesAutomatically();
+                uploadFilesAutomatically(rejected);
+            } else if (rejected.length > 0) {
+                alert("Solo se permiten archivos Excel (.xlsx, .xls) o CSV.");
             }
         }
 
-        function uploadFilesAutomatically() {
-            const validateBox = document.getElementById("validate");
-            
+        function uploadFilesAutomatically(rejected) {
+            resetDownstreamButtons();
+            validateTracker = new ProcessTracker(document.getElementById("validatePanel"), {
+                title: "Carga de archivos",
+                steps: [{ label: "Subiendo archivos al servidor", match: [] }],
+                success: [],
+                error: []
+            });
+            const tracker = validateTracker;
+            tracker._advanceTo(0);
+
+            for (let i = 0; i < selectedFiles.files.length; i++) {
+                tracker.note("• " + selectedFiles.files[i].name);
+            }
+            (rejected || []).forEach(name => tracker.note("✗ Rechazado (no es Excel/CSV): " + name));
+
             const formData = new FormData();
+            formData.append("selected_id", selectedId);
             for (let i = 0; i < selectedFiles.files.length; i++) {
                 formData.append("files", selectedFiles.files[i]);
             }
-            
-            fetch("/upload-files", {
-                method: "POST",
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === "success") {
-                    validateBox.innerText += `✓ Files loaded successfully!\n`;
-                    if (data.uploaded_files) {
-                        data.uploaded_files.forEach(file => {
-                            validateBox.innerText += `  - ${file}\n`;
-                        });
+
+            fetch("/upload-files", { method: "POST", body: formData })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        (data.uploaded_files || []).forEach(f => tracker.note("  ✓ " + f));
+                        tracker.succeed();
+                        tracker.note('Ahora podés hacer click en "Validate".');
+                    } else {
+                        tracker.fail(data.message);
+                        (data.errors || []).forEach(e => tracker.note("  ✗ " + e));
                     }
-                } else {
-                    validateBox.innerText += `✗ Load failed: ${data.message}\n`;
-                }
-                validateBox.scrollTop = validateBox.scrollHeight;
-            })
-            .catch(error => {
-                validateBox.innerText += `✗ Load error: ${error.message}\n`;
-                validateBox.scrollTop = validateBox.scrollHeight;
-            });
+                })
+                .catch(error => {
+                    tracker.fail("Error de carga: " + error.message);
+                });
         }
 
-        // Click to select files
         dropZone.addEventListener("click", () => {
             fileInput.click();
         });
@@ -329,7 +1529,6 @@
         fileInput.addEventListener("change", (e) => {
             handleFiles(e.target.files);
         });
-
     </script>
 </body>
 </html>

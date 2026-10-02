@@ -1,11 +1,15 @@
 import subprocess
 import os
 
-def run_upload():
+def run_upload(client_token=None):
+    command = ["python", "-u", "upload_db.py"]
+    if client_token:
+        command.append(client_token)
+
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     process = subprocess.Popen(
-        ["python", "-u", "upload_db.py"],  # <- add -u for unbuffered
+        command,  # <- add -u for unbuffered
         cwd="C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
