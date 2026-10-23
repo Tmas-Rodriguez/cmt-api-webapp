@@ -122,7 +122,7 @@ import_jobs_lock = threading.Lock()
 CLIENT_SHEETS = {
     "box1": {"token": "san",     "sheet_id": "1CeXtrSc2NJvn6pRYD9NDMjLi4RolkiRhJbAEF4r8bX8"},  # Santander
     "box2": {"token": "gp",      "sheet_id": "13Op3wmHnI9zCVnLGs7f9uMr35jjWQmzYIhfx79Z8d6M"},  # Grupo Petersen
-    "box3": {"token": "alsea",   "sheet_id": "105aDRdy-E9VItBgm529_AF6Muxc3vsi-mtB4IIDhXEQ"},  # Alsea
+    # box3 (Alsea) ya no se importa desde Sheets: viaja por otro camino.
     "box4": {"token": "la",      "sheet_id": "1CX4WSq7PR-1a6FWstM-DdnqlKgo1_VNiohoQ8e8AiMI"},  # La Anonima
     "box5": {"token": "mostaza", "sheet_id": "1fpNxj9lToSOfBIrzALtyoIcTXwOvskUoj1h0yK92-0g"},  # Mostaza
     "box6": {"token": "dia",     "sheet_id": "1zLxmB7vndMRh2P7iJbitpPMkd94ZHtJ6Q-VtytJcAbM"},  # DIA
@@ -596,7 +596,7 @@ def download_refresh_files():
 
 # Los .json cuyo nombre contenga alguno de estos tokens NUNCA se muestran.
 ERROR_FILES_IGNORE = ("invalid_sites", "power_chart", "invoice_files")
-# pdf_upload ya se comunica en su propio panel (#pdfReport), no se duplica acá.
+# pdf_upload se consulta desde el listado de facturas sin PDF de cada cliente, no se duplica acá.
 ERROR_FILES_SKIP_PANEL = ("pdf_upload",)
 
 # Etiqueta legible por prefijo de archivo (se elige el prefijo más largo que matchee).
@@ -713,6 +713,11 @@ def import_from_sheets():
     config = CLIENT_SHEETS.get(selected_id)
     company = next((c for c in companies if c["id"] == selected_id), None)
     selected_name = company["name"] if company else None
+    if company and not config:
+        return jsonify({
+            "status": "error",
+            "message": f"{selected_name} ya no se importa desde Google Sheets.",
+        }), 400
     if not config or not selected_name:
         return jsonify({"status": "error", "message": "Cliente inválido o no seleccionado."}), 400
     client_token = company["token"]

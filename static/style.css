@@ -234,6 +234,10 @@ button:active {
 .import-sheets-btn:hover {
     background-color: #0c7d46;
 }
+.import-sheets-btn:disabled {
+    background-color: #b5b9be;
+    cursor: not-allowed;
+}
 
 /* ===== Validation Controls Layout ===== */
 .validation-controls {
