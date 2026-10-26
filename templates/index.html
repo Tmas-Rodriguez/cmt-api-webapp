@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
     <style>
         .forbidden {
@@ -63,6 +63,25 @@
         <button class="submit-btn" onclick="startRefreshStream()">Actualizar Bucket</button>
         <div id="refreshPanel" class="process-panel" data-state="idle" hidden></div>
         <div id="refreshErrors" class="err-reports" hidden></div>
+    </div>
+
+    <h2>ICBC · Alta de cuentas en producción</h2>
+    <div class="icbc-accounts">
+        <p class="icbc-note">Inserta cuentas nuevas <strong>directo en la base productiva</strong> de ICBC (<code>cmt_icbc_prod</code>), sin recargar nada. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
+        <div class="icbc-controls">
+            <select id="icbcService">
+                <option value="electricidad">Electricidad</option>
+                <option value="gas">Gas</option>
+                <option value="agua">Agua</option>
+                <option value="residuos">Residuos</option>
+                <option value="combustible">Combustible</option>
+                <option value="otros">Otros</option>
+            </select>
+            <input type="file" id="icbcCsv" accept=".csv">
+            <button type="button" class="icbc-btn" id="icbcRunBtn" onclick="startIcbcAccounts()">Cargar cuentas en producción</button>
+        </div>
+        <pre id="icbcLog" class="icbc-log" hidden></pre>
+        <div id="icbcErrors" class="icbc-errors" hidden></div>
     </div>
 
     <h2>Validar archivos CSV</h2>
@@ -781,6 +800,72 @@
             toggle.onclick = function () { expanded = !expanded; paint(); };
             paint();
             if (items.length > UNMATCHED_PREVIEW) panel.appendChild(toggle);
+        }
+
+        // ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py).
+        function startIcbcAccounts() {
+            const fileInput = document.getElementById("icbcCsv");
+            const serviceSel = document.getElementById("icbcService");
+            const btn = document.getElementById("icbcRunBtn");
+            const log = document.getElementById("icbcLog");
+            const errBox = document.getElementById("icbcErrors");
+            if (!fileInput.files.length) { alert("Elegí el CSV con las cuentas nuevas."); return; }
+            const serviceLabel = serviceSel.options[serviceSel.selectedIndex].text;
+            if (!confirm("Vas a insertar cuentas de " + serviceLabel + " DIRECTO en la base PRODUCTIVA de ICBC (cmt_icbc_prod) con el archivo \"" + fileInput.files[0].name + "\".\n\n¿Continuar?")) return;
+
+            const RESULT = "__ICBC_RESULT__:";
+            const ERRORS = "__ICBC_ERRORS__:";
+            btn.disabled = true;
+            log.hidden = false; log.textContent = "";
+            errBox.hidden = true; errBox.textContent = "";
+            function say(line) { log.textContent += line + "\n"; log.scrollTop = log.scrollHeight; }
+
+            const form = new FormData();
+            form.append("service", serviceSel.value);
+            form.append("file", fileInput.files[0]);
+            form.append("confirm", "true");
+            fetch("/icbc/accounts/start", { method: "POST", body: form })
+                .then(function (r) {
+                    if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
+                    return r.json();
+                })
+                .then(function (data) {
+                    if (data.status !== "accepted") throw new Error(data.message || "No se pudo iniciar.");
+                    const es = new EventSource("/stream-icbc-accounts?job=" + encodeURIComponent(data.job_id));
+                    es.onmessage = function (event) {
+                        const line = event.data;
+                        if (line.indexOf(ERRORS) === 0) {
+                            try { renderIcbcErrors(errBox, JSON.parse(line.slice(ERRORS.length))); } catch (e) { console.error(e); }
+                            return;
+                        }
+                        if (line.indexOf(RESULT) === 0) {
+                            es.close();
+                            btn.disabled = false;
+                            say(line.slice(RESULT.length) === "ok" ? "✓ Listo." : "✗ Terminó con errores.");
+                            return;
+                        }
+                        say(line);
+                    };
+                    es.onerror = function () { es.close(); btn.disabled = false; };
+                })
+                .catch(function (err) { say("Error: " + err.message); btn.disabled = false; });
+        }
+
+        function renderIcbcErrors(box, files) {
+            box.textContent = "";
+            box.hidden = !files.length;
+            files.forEach(function (file) {
+                const det = document.createElement("details");
+                det.open = true;
+                const sum = document.createElement("summary");
+                sum.textContent = file.name;
+                det.appendChild(sum);
+                const pre = document.createElement("pre");
+                try { pre.textContent = JSON.stringify(file.content, null, 2).slice(0, 20000); }
+                catch (e) { pre.textContent = String(file.content); }
+                det.appendChild(pre);
+                box.appendChild(det);
+            });
         }
 
         // Actualiza en vivo el contador de PDFs sin matchear en cada botón de cliente.

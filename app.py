@@ -22,6 +22,7 @@ from gera_runner import run_gera
 from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
 from sheets_runner import import_sheet
+from icbc_runner import run_icbc_accounts, validate_csv, ICBC_SERVICES, RESULT_MARKER as ICBC_RESULT_MARKER
 from file_handler import save_file_to_organized_folder, save_local_file_to_organized_folder
 import aws_sso
 import locks
@@ -138,7 +139,7 @@ login_manager.init_app(app)
 @login_manager.unauthorized_handler
 def unauthorized():
     """Handle unauthorized requests - return JSON for AJAX, redirect for browser"""
-    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/import-from-sheets/status/')):
+    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/icbc/', '/stream-icbc-accounts', '/import-from-sheets/status/')):
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     return redirect(url_for("login"))
 
@@ -700,6 +701,67 @@ def run_errors(flow):
         "flow": flow,
         "files": _collect_run_error_files(start_time),
     })
+
+
+# ---- ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py) ----
+ICBC_LOCK_ID = "icbc"
+icbc_jobs = {}
+icbc_jobs_lock = threading.Lock()
+
+
+@app.route("/icbc/accounts/start", methods=["POST"])
+@login_required
+def icbc_accounts_start():
+    """Recibe el CSV, lo valida y deja un job listo para /stream-icbc-accounts.
+    Escribe en PRODUCCIÓN, por eso exige confirmación explícita y toma un lock."""
+    if request.form.get("confirm") != "true":
+        return jsonify({"status": "error", "message": "Falta la confirmación explícita."}), 400
+    service = request.form.get("service")
+    if service not in ICBC_SERVICES:
+        return jsonify({"status": "error", "message": "Servicio inválido."}), 400
+    upload = request.files.get("file")
+    if not upload or not upload.filename.lower().endswith(".csv"):
+        return jsonify({"status": "error", "message": "Subí un archivo .csv."}), 400
+
+    temp_dir = tempfile.mkdtemp(prefix="icbc_accounts_")
+    csv_path = os.path.join(temp_dir, "cuentas.csv")
+    upload.save(csv_path)
+    ok, message = validate_csv(csv_path)
+    if not ok:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return jsonify({"status": "error", "message": message}), 400
+
+    acquired, entry = locks.acquire(ICBC_LOCK_ID, current_user.name, "icbc-cuentas")
+    if not acquired:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return jsonify({
+            "status": "error",
+            "message": f"El alta de cuentas de ICBC está en uso por {entry['locked_by']}.",
+        }), 409
+
+    job_id = uuid4().hex
+    with icbc_jobs_lock:
+        icbc_jobs[job_id] = {"service": service, "csv_path": csv_path, "temp_dir": temp_dir, "user": current_user.name}
+    return jsonify({"status": "accepted", "job_id": job_id})
+
+
+@app.route("/stream-icbc-accounts")
+@login_required
+def stream_icbc_accounts():
+    job_id = request.args.get("job")
+    with icbc_jobs_lock:
+        job = icbc_jobs.pop(job_id, None)
+    if not job or job["user"] != current_user.name:
+        return jsonify({"status": "error", "message": "Job inexistente o ya ejecutado."}), 404
+
+    def event_stream():
+        try:
+            for line in run_icbc_accounts(job["service"], job["csv_path"]):
+                yield f"data: {line}\n\n"
+        finally:
+            shutil.rmtree(job["temp_dir"], ignore_errors=True)
+            locks.release(ICBC_LOCK_ID, job["user"])
+    return Response(stream_with_context(event_stream()), mimetype="text/event-stream")
 
 
 @app.route("/import-from-sheets", methods=["POST"])
