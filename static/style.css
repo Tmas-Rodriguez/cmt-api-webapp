@@ -556,14 +556,14 @@ button:active {
 }
 .unmatched-toggle:hover { background: #5a6268; }
 
-/* ===== ICBC: alta de cuentas en producción ===== */
-.icbc-accounts { margin-bottom: 24px; }
-.icbc-note { color: #555; font-size: 0.9rem; margin: 0 0 12px; }
-.icbc-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-.icbc-btn { width: auto; background-color: #c0392b; }
-.icbc-btn:hover { background-color: #a5311f; }
-.icbc-btn:disabled { background-color: #b5b9be; cursor: not-allowed; }
-.icbc-log {
+/* ===== Alta de cuentas en producción ===== */
+.accounts-accounts { margin-bottom: 24px; }
+.accounts-note { color: #555; font-size: 0.9rem; margin: 0 0 12px; }
+.accounts-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.accounts-btn { width: auto; background-color: #c0392b; }
+.accounts-btn:hover { background-color: #a5311f; }
+.accounts-btn:disabled { background-color: #b5b9be; cursor: not-allowed; }
+.accounts-log {
     margin: 12px 0 0;
     padding: 10px 12px;
     max-height: 280px;
@@ -574,8 +574,8 @@ button:active {
     font-size: 0.8rem;
     white-space: pre-wrap;
 }
-.icbc-errors details { margin-top: 10px; background: #fff; border: 1px solid #e3e6ee; border-left: 4px solid #c0392b; border-radius: 8px; padding: 8px 12px; }
-.icbc-errors pre { max-height: 300px; overflow: auto; font-size: 0.8rem; }
+.accounts-errors details { margin-top: 10px; background: #fff; border: 1px solid #e3e6ee; border-left: 4px solid #c0392b; border-radius: 8px; padding: 8px 12px; }
+.accounts-errors pre { max-height: 300px; overflow: auto; font-size: 0.8rem; }
 
 /* ===== Reportes de error expandibles (refresh y gera/just_all) ===== */
 .err-reports {

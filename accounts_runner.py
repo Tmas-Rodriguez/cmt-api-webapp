@@ -1,15 +1,21 @@
-"""Alta de cuentas nuevas de ICBC directamente en producción.
+"""Alta de cuentas nuevas directamente en producción (añadido al flujo normal).
 
-A diferencia del resto de los clientes (que reconstruyen la base local y la suben
-entera con import_db), acá se corre una receta de EsgCmt-API que INSERTA las cuentas
-nuevas en la base productiva sin borrar nada:
+El flujo normal (Validate / Upload) sigue igual: arma la base local y la sube entera con
+import_db, reemplazando las colecciones. Esto es un añadido para cuando solo hay que SUMAR
+cuentas: se corre una receta de EsgCmt-API que INSERTA las cuentas nuevas en la base
+productiva del cliente sin borrar nada:
 
-    just account_<servicio>_prod cmt_icbc_prod <ruta al csv>
+    just account_<servicio>_prod cmt_<cliente>_prod <ruta al csv>
 
-Las recetas viven en la rama ICBC_BRANCH, que no es la que tiene el árbol de trabajo
-principal de EsgCmt-API. Para no mover esa rama ni tocar los cambios locales (p. ej. el
-justfile modificado), la receta se corre desde un git worktree aparte con el justfile
-tal cual viene en la rama. La carga es todo o nada: si hay errores no se escribe nada.
+Las cuentas salen de la planilla del cliente en el data entry (cuentas_<x>, exportado en el
+momento) menos las que ya están en producción. Las recetas viven en la rama RECIPES_BRANCH
+(basada en patron-v1.5), que no es la que tiene el árbol de trabajo principal de
+EsgCmt-API. Para no mover esa rama ni tocar los cambios locales (p. ej. el justfile
+modificado), la receta se corre desde un git worktree aparte con el justfile tal cual viene
+en la rama. La carga es todo o nada: si hay errores no se escribe nada.
+
+Solo se habilitan los clientes de patron v1.5: el parser de cuentas de v1.6 es distinto
+(ver supported()) y las recetas de esa rama no están pensadas para esa versión.
 """
 
 import csv
@@ -23,10 +29,26 @@ import time
 from pathlib import Path
 
 ESG_REPOSITORY = Path(r"C:\Users\cmt\Documents\Repsitories\EsgCmt-API")
-ICBC_WORKTREE = ESG_REPOSITORY.parent / "EsgCmt-API-icbc"
-ICBC_BRANCH = "feat/account-insert-prod-recipes"
-ICBC_REMOTE_REF = f"origin/{ICBC_BRANCH}"
-ICBC_DB = "cmt_icbc_prod"
+# Worktree de la rama de recetas (se creó para ICBC, de ahí el nombre de la carpeta).
+RECIPES_WORKTREE = ESG_REPOSITORY.parent / "EsgCmt-API-icbc"
+RECIPES_BRANCH = "feat/account-insert-prod-recipes"
+RECIPES_REMOTE_REF = f"origin/{RECIPES_BRANCH}"
+RECIPES_PATRON_BRANCH = "patron-v1.5"   # la rama de recetas parte de esta versión del patrón
+
+# id de la caja en la webapp (o "icbc", que no tiene caja) ->
+#   name  texto en la UI
+#   code  código del cliente en el data entry (CLIENT_BY_CODE)
+#   db    base de producción en Mongo
+#   patron_branch  versión del patrón si no figura en client_branches.json
+ACCOUNT_CLIENTS = {
+    "box1": {"name": "Santander", "code": "SAN", "db": "cmt_santander_prod", "patron_branch": "patron-v1.5"},
+    "box2": {"name": "Grupo Petersen", "code": "GP", "db": "cmt_gp_prod", "patron_branch": "patron-v1.5"},
+    "box3": {"name": "Alsea", "code": "ALSEA", "db": "cmt_alsea_prod", "patron_branch": "patron-v1.5"},
+    "box4": {"name": "La Anonima", "code": "LA", "db": "cmt_laanonima_prod", "patron_branch": "patron-v1.5"},
+    "box5": {"name": "Mostaza", "code": "MTZ", "db": "cmt_mostaza_prod", "patron_branch": "patron-v1.6"},
+    "box6": {"name": "DIA", "code": "DIA", "db": "cmt_dia_prod", "patron_branch": "patron-v1.6"},
+    "icbc": {"name": "ICBC", "code": "ICBC", "db": "cmt_icbc_prod", "patron_branch": "patron-v1.5"},
+}
 
 # servicio (valor del selector) ->
 #   label      texto en la UI
@@ -35,7 +57,7 @@ ICBC_DB = "cmt_icbc_prod"
 #   key_col    columna del CSV que es el número de cuenta en Mongo (account.number)
 #   collection colección de cuentas en Mongo
 #   mongo_service valor de `service` en Mongo
-ICBC_SERVICES = {
+ACCOUNT_SERVICES = {
     "electricidad": {"label": "Electricidad", "recipe": "account_electricity_prod", "table": "e",
                      "key_col": "cuenta", "collection": "account", "mongo_service": "electricidad"},
     "gas": {"label": "Gas", "recipe": "account_gas_prod", "table": "g",
@@ -50,13 +72,30 @@ ICBC_SERVICES = {
               "key_col": "nombre_cuenta", "collection": "account_other", "mongo_service": "otro"},
 }
 
-# De la app de data entry (ver dentry_client.py) sale el cuentas_<x> de la planilla de ICBC.
-DATA_ENTRY_CLIENT_CODE = "ICBC"
 ENV_SCRIPT = ESG_REPOSITORY / ".env.script"
 
 ERROR_MARKERS = ("PARSING ERRORS", "WRITING ERRORS")
-ERRORS_MARKER = "__ICBC_ERRORS__:"
-RESULT_MARKER = "__ICBC_RESULT__:"
+ERRORS_MARKER = "__ACCOUNTS_ERRORS__:"
+RESULT_MARKER = "__ACCOUNTS_RESULT__:"
+
+
+def supported(client_id, client_branches=None):
+    """(ok, motivo). Solo los clientes de patron v1.5 pueden usar las recetas de la rama.
+
+    `client_branches` es el contenido de client_branches.json ({box_id: {"branch": ...}}):
+    si el cliente figura ahí manda esa versión; si no, la de ACCOUNT_CLIENTS.
+    """
+    cfg = ACCOUNT_CLIENTS.get(client_id)
+    if cfg is None:
+        return False, "Cliente inválido."
+    branch = ((client_branches or {}).get(client_id) or {}).get("branch") or cfg["patron_branch"]
+    if branch != RECIPES_PATRON_BRANCH:
+        return False, (
+            f"{cfg['name']} usa {branch}: las recetas de {RECIPES_BRANCH} parten de "
+            f"{RECIPES_PATRON_BRANCH} y el parser de cuentas de v1.6 es distinto. "
+            "Hace falta una versión de las recetas basada en v1.6."
+        )
+    return True, ""
 
 
 def _cloud_mongo_url():
@@ -71,22 +110,31 @@ def _cloud_mongo_url():
     raise RuntimeError("No se encontró CLOUD_DATABASE_URL en el .env.script de EsgCmt-API.")
 
 
-def fetch_cuentas_csv(service):
-    """cuentas_<x>.csv de la planilla de ICBC, exportado en el momento por el data entry."""
+def fetch_cuentas_csv(client_id, service):
+    """cuentas_<x>.csv de la planilla del cliente, exportado en el momento por el data entry."""
     import dentry_client
 
-    table = ICBC_SERVICES[service]["table"]
-    return dentry_client.request(f"/internal/cmt/cuentas/{DATA_ENTRY_CLIENT_CODE}/{table}.csv", scope="cuentas")
+    code = ACCOUNT_CLIENTS[client_id]["code"]
+    table = ACCOUNT_SERVICES[service]["table"]
+    try:
+        return dentry_client.request(f"/internal/cmt/cuentas/{code}/{table}.csv", scope="cuentas")
+    except RuntimeError as error:
+        if "404" in str(error):
+            raise RuntimeError(
+                f"El data entry no tiene la tabla cuentas_{table} para {ACCOUNT_CLIENTS[client_id]['name']} "
+                "(o todavía no tiene la versión con las rutas internas)."
+            ) from error
+        raise
 
 
-def existing_accounts(service):
+def existing_accounts(client_id, service):
     """{(siteCode, number, supplier)} de las cuentas del servicio ya cargadas en producción."""
     from pymongo import MongoClient
 
-    cfg = ICBC_SERVICES[service]
+    cfg = ACCOUNT_SERVICES[service]
     client = MongoClient(_cloud_mongo_url(), serverSelectionTimeoutMS=10000)
     try:
-        cursor = client[ICBC_DB][cfg["collection"]].find(
+        cursor = client[ACCOUNT_CLIENTS[client_id]["db"]][cfg["collection"]].find(
             {"service": cfg["mongo_service"]}, {"_id": 0, "siteCode": 1, "number": 1, "supplier": 1}
         )
         return {(str(d.get("siteCode")), str(d.get("number")), str(d.get("supplier"))) for d in cursor}
@@ -102,7 +150,7 @@ def split_new_accounts(service, csv_bytes, existing):
     Devuelve {total, existing, new, items, csv_bytes}: csv_bytes solo con las nuevas, mismo
     encabezado y mismo formato que el export (todo entrecomillado).
     """
-    key_col = ICBC_SERVICES[service]["key_col"]
+    key_col = ACCOUNT_SERVICES[service]["key_col"]
     reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
     header = reader.fieldnames or []
     missing = [c for c in ("id_sitio", key_col, "proveedor") if c not in header]
@@ -129,11 +177,13 @@ def split_new_accounts(service, csv_bytes, existing):
     }
 
 
-def prepare_preview(service):
+def prepare_preview(client_id, service):
     """Exporta la planilla, descarta lo que ya está en producción y deja el CSV de las nuevas
     en una carpeta temporal. Devuelve el resumen + temp_dir/csv_path."""
-    result = split_new_accounts(service, fetch_cuentas_csv(service), existing_accounts(service))
-    temp_dir = tempfile.mkdtemp(prefix="icbc_accounts_")
+    result = split_new_accounts(
+        service, fetch_cuentas_csv(client_id, service), existing_accounts(client_id, service)
+    )
+    temp_dir = tempfile.mkdtemp(prefix="prod_accounts_")
     csv_path = os.path.join(temp_dir, "cuentas.csv")
     with open(csv_path, "wb") as handle:
         handle.write(result.pop("csv_bytes"))
@@ -164,32 +214,32 @@ def _git(*args, cwd=ESG_REPOSITORY):
 
 
 def prepare_worktree():
-    """Deja ICBC_WORKTREE en el commit de ICBC_REMOTE_REF, con node_modules y .env.script.
+    """Deja RECIPES_WORKTREE en el commit de RECIPES_REMOTE_REF, con node_modules y .env.script.
 
     Devuelve (ok, mensaje). No hace fetch ni toca el árbol de trabajo principal.
     """
-    if _git("rev-parse", "--verify", "--quiet", ICBC_REMOTE_REF).returncode != 0:
+    if _git("rev-parse", "--verify", "--quiet", RECIPES_REMOTE_REF).returncode != 0:
         return False, (
-            f"La rama {ICBC_BRANCH} no está en el repo local de EsgCmt-API "
-            f"(falta {ICBC_REMOTE_REF}). Hacé un git fetch o verificá que exista en el remoto."
+            f"La rama {RECIPES_BRANCH} no está en el repo local de EsgCmt-API "
+            f"(falta {RECIPES_REMOTE_REF}). Hacé un git fetch o verificá que exista en el remoto."
         )
 
-    if not ICBC_WORKTREE.exists():
-        result = _git("worktree", "add", "--detach", str(ICBC_WORKTREE), ICBC_REMOTE_REF)
+    if not RECIPES_WORKTREE.exists():
+        result = _git("worktree", "add", "--detach", str(RECIPES_WORKTREE), RECIPES_REMOTE_REF)
         if result.returncode != 0:
-            return False, f"No se pudo crear el worktree de ICBC: {result.stderr.strip()}"
+            return False, f"No se pudo crear el worktree de recetas: {result.stderr.strip()}"
     else:
-        dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=ICBC_WORKTREE)
+        dirty = _git("status", "--porcelain", "--untracked-files=no", cwd=RECIPES_WORKTREE)
         if dirty.returncode != 0:
-            return False, f"El worktree de ICBC no es válido: {dirty.stderr.strip()}"
+            return False, f"El worktree de recetas no es válido: {dirty.stderr.strip()}"
         if dirty.stdout.strip():
-            return False, "El worktree de ICBC tiene cambios sin commitear; revisalo antes de seguir."
-        result = _git("checkout", "--detach", ICBC_REMOTE_REF, cwd=ICBC_WORKTREE)
+            return False, "El worktree de recetas tiene cambios sin commitear; revisalo antes de seguir."
+        result = _git("checkout", "--detach", RECIPES_REMOTE_REF, cwd=RECIPES_WORKTREE)
         if result.returncode != 0:
-            return False, f"No se pudo actualizar el worktree de ICBC: {result.stderr.strip()}"
+            return False, f"No se pudo actualizar el worktree de recetas: {result.stderr.strip()}"
 
     # node_modules compartido (junction) y .env.script actual (CLOUD_DATABASE_URL).
-    link = ICBC_WORKTREE / "node_modules"
+    link = RECIPES_WORKTREE / "node_modules"
     if not link.exists():
         made = subprocess.run(
             ["cmd", "/c", "mklink", "/J", str(link), str(ESG_REPOSITORY / "node_modules")],
@@ -199,17 +249,17 @@ def prepare_worktree():
             return False, f"No se pudo enlazar node_modules: {made.stdout.strip() or made.stderr.strip()}"
     # Los entrypoints escriben sus reportes en ./errors/, que está en .gitignore y por eso
     # no existe en un worktree recién creado (sin la carpeta, writeFileSync fallaría).
-    (ICBC_WORKTREE / "errors").mkdir(exist_ok=True)
+    (RECIPES_WORKTREE / "errors").mkdir(exist_ok=True)
     env_script = ESG_REPOSITORY / ".env.script"
     if not env_script.is_file():
         return False, "No existe .env.script en EsgCmt-API (hace falta CLOUD_DATABASE_URL)."
-    shutil.copyfile(env_script, ICBC_WORKTREE / ".env.script")
-    return True, f"Worktree listo en {ICBC_REMOTE_REF}."
+    shutil.copyfile(env_script, RECIPES_WORKTREE / ".env.script")
+    return True, f"Worktree listo en {RECIPES_REMOTE_REF}."
 
 
 def _recipe_exists(recipe):
     result = subprocess.run(
-        ["just", "--summary"], cwd=str(ICBC_WORKTREE), capture_output=True, text=True,
+        ["just", "--summary"], cwd=str(RECIPES_WORKTREE), capture_output=True, text=True,
         encoding="utf-8", errors="replace",
     )
     return result.returncode == 0 and recipe in result.stdout.split()
@@ -217,7 +267,7 @@ def _recipe_exists(recipe):
 
 def _collect_errors(since):
     files = []
-    errors_dir = ICBC_WORKTREE / "errors"
+    errors_dir = RECIPES_WORKTREE / "errors"
     if errors_dir.is_dir():
         for path in sorted(errors_dir.glob("*.json")):
             if path.stat().st_mtime < since:
@@ -230,15 +280,21 @@ def _collect_errors(since):
     return files
 
 
-def run_icbc_accounts(service, csv_path):
+def run_prod_accounts(client_id, service, csv_path, client_branches=None):
     """Generador de líneas de log. Termina con RESULT_MARKER ok|error."""
-    if service not in ICBC_SERVICES:
-        yield "Servicio inválido."
+    cfg = ACCOUNT_CLIENTS.get(client_id)
+    if cfg is None or service not in ACCOUNT_SERVICES:
+        yield "Cliente o servicio inválido."
         yield RESULT_MARKER + "error"
         return
-    label, recipe = ICBC_SERVICES[service]["label"], ICBC_SERVICES[service]["recipe"]
+    ok, reason = supported(client_id, client_branches)
+    if not ok:
+        yield reason
+        yield RESULT_MARKER + "error"
+        return
+    label, recipe, db = ACCOUNT_SERVICES[service]["label"], ACCOUNT_SERVICES[service]["recipe"], cfg["db"]
 
-    yield f"Alta de cuentas ICBC · {label} · base {ICBC_DB} (PRODUCCIÓN)"
+    yield f"Alta de cuentas {cfg['name']} · {label} · base {db} (PRODUCCIÓN)"
 
     ok, message = validate_csv(csv_path)
     yield message
@@ -246,7 +302,7 @@ def run_icbc_accounts(service, csv_path):
         yield RESULT_MARKER + "error"
         return
 
-    yield "Preparando el entorno de la rama de ICBC..."
+    yield "Preparando el entorno de la rama de recetas..."
     ok, message = prepare_worktree()
     yield message
     if not ok:
@@ -254,17 +310,17 @@ def run_icbc_accounts(service, csv_path):
         return
 
     if not _recipe_exists(recipe):
-        yield f"La receta {recipe} no existe en {ICBC_REMOTE_REF}. No se ejecutó nada."
+        yield f"La receta {recipe} no existe en {RECIPES_REMOTE_REF}. No se ejecutó nada."
         yield RESULT_MARKER + "error"
         return
 
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     started = time.time()
-    yield f"Ejecutando: just {recipe} {ICBC_DB} <csv>"
+    yield f"Ejecutando: just {recipe} {db} <csv>"
     process = subprocess.Popen(
-        ["just", recipe, ICBC_DB, str(csv_path)],
-        cwd=str(ICBC_WORKTREE),
+        ["just", recipe, db, str(csv_path)],
+        cwd=str(RECIPES_WORKTREE),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,
@@ -287,7 +343,7 @@ def run_icbc_accounts(service, csv_path):
         yield ERRORS_MARKER + json.dumps(error_files, ensure_ascii=False)
 
     if returncode != 0 or saw_error or error_files:
-        yield "No se cargó ninguna cuenta: la carga es todo o nada. Corregí el CSV y volvé a correr."
+        yield "No se cargó ninguna cuenta: la carga es todo o nada. Corregí lo que indican los errores y volvé a correr."
         yield RESULT_MARKER + "error"
     else:
         yield "Proceso completado: sin errores, las cuentas quedaron cargadas. Verificalas en la webapp."

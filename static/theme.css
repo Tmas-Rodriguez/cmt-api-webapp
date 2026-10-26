@@ -205,20 +205,20 @@ table.admin-table td { padding: 8px; border-bottom: 1px solid var(--field); colo
 .chip.chip-accent { background: var(--accent-soft); color: var(--accent); }
 .chip.chip-accent b { color: var(--accent-hover); }
 
-/* ----- ICBC ----- */
-.icbc-card { padding: 20px; }
-.icbc-note { color: var(--muted-2); font-size: 0.75rem; line-height: 1.6; margin: 0 0 16px; max-width: 760px; }
-.icbc-note code { background: var(--line-soft); padding: 1px 6px; border-radius: 4px; font-size: 0.6875rem; color: var(--ink-2); }
-.icbc-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
-.icbc-field { min-width: 180px; }
-.icbc-field .field-input { width: 100%; padding: 8px 10px; }
-.icbc-preview { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 0.75rem; color: var(--muted-2); }
-.icbc-chips { margin-bottom: 4px; }
-.icbc-empty { margin: 8px 0 0; }
-.icbc-actions { margin-top: 14px; }
-.icbc-log { background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: 0.75rem; }
-.icbc-errors details { background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--danger); border-radius: 8px; }
-.icbc-errors summary { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); cursor: pointer; }
+/* ----- Alta de cuentas en producción ----- */
+.accounts-card { padding: 20px; }
+.accounts-note { color: var(--muted-2); font-size: 0.75rem; line-height: 1.6; margin: 0 0 16px; max-width: 760px; }
+.accounts-note code { background: var(--line-soft); padding: 1px 6px; border-radius: 4px; font-size: 0.6875rem; color: var(--ink-2); }
+.accounts-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.accounts-field { min-width: 180px; }
+.accounts-field .field-input { width: 100%; padding: 8px 10px; }
+.accounts-preview { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 0.75rem; color: var(--muted-2); }
+.accounts-chips { margin-bottom: 4px; }
+.accounts-empty { margin: 8px 0 0; }
+.accounts-actions { margin-top: 14px; }
+.accounts-log { background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: 0.75rem; }
+.accounts-errors details { background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--danger); border-radius: 8px; }
+.accounts-errors summary { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); cursor: pointer; }
 
 /* ----- AWS modal ----- */
 .aws-modal-card { border-radius: 12px; }

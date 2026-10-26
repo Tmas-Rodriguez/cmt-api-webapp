@@ -23,7 +23,7 @@ from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
 from sheets_runner import import_sheet
 import dentry_client
-from icbc_runner import run_icbc_accounts, prepare_preview as prepare_icbc_preview, ICBC_SERVICES
+import accounts_runner
 from file_handler import save_file_to_organized_folder, save_local_file_to_organized_folder
 import aws_sso
 import locks
@@ -141,7 +141,7 @@ login_manager.init_app(app)
 @login_manager.unauthorized_handler
 def unauthorized():
     """Handle unauthorized requests - return JSON for AJAX, redirect for browser"""
-    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/icbc/', '/stream-icbc-accounts', '/prepare-validation', '/import-from-sheets/status/')):
+    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/accounts/', '/stream-prod-accounts', '/prepare-validation', '/import-from-sheets/status/')):
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     return redirect(url_for("login"))
 
@@ -167,7 +167,7 @@ def index():
             **company,
             "unmatched": entry.get("count") if isinstance(entry, dict) else None,
         })
-    return render_template("index.html", companies=enriched)
+    return render_template("index.html", companies=enriched, account_clients=account_clients_for_ui())
 
 
 @app.route("/pdf-unmatched-counts")
@@ -719,100 +719,118 @@ def run_errors(flow):
     })
 
 
-# ---- ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py) ----
-ICBC_LOCK_ID = "icbc"
-ICBC_PREVIEW_TTL_SECONDS = 15 * 60
-icbc_jobs = {}
-icbc_jobs_lock = threading.Lock()
+# ---- Alta de cuentas nuevas directo en producción, para todos los clientes (ver accounts_runner.py) ----
+# Es un añadido: el flujo normal (Validate / Upload) sigue reemplazando las bases como siempre.
+PROD_ACCOUNTS_PREVIEW_TTL_SECONDS = 15 * 60
+prod_account_jobs = {}
+prod_account_jobs_lock = threading.Lock()
 
 
-def _icbc_drop_job(job):
+def account_clients_for_ui():
+    """Clientes del alta directa de cuentas, con si se pueden usar según su versión de patrón."""
+    branches = load_client_branches()
+    clients = []
+    for client_id, cfg in accounts_runner.ACCOUNT_CLIENTS.items():
+        ok, reason = accounts_runner.supported(client_id, branches)
+        clients.append({"id": client_id, "name": cfg["name"], "supported": ok, "reason": reason})
+    return clients
+
+
+def _prod_accounts_drop_job(job):
     shutil.rmtree(job["temp_dir"], ignore_errors=True)
 
 
-def _icbc_sweep_stale_jobs():
-    """Borra los previews que nadie confirmó (más viejos que ICBC_PREVIEW_TTL_SECONDS)."""
-    cutoff = time.time() - ICBC_PREVIEW_TTL_SECONDS
-    with icbc_jobs_lock:
-        stale = [job_id for job_id, job in icbc_jobs.items() if job["created"] < cutoff and not job["running"]]
-        dropped = [icbc_jobs.pop(job_id) for job_id in stale]
+def _prod_accounts_sweep_stale_jobs():
+    """Borra los previews que nadie confirmó (más viejos que PROD_ACCOUNTS_PREVIEW_TTL_SECONDS)."""
+    cutoff = time.time() - PROD_ACCOUNTS_PREVIEW_TTL_SECONDS
+    with prod_account_jobs_lock:
+        stale = [job_id for job_id, job in prod_account_jobs.items() if job["created"] < cutoff and not job["running"]]
+        dropped = [prod_account_jobs.pop(job_id) for job_id in stale]
     for job in dropped:
-        _icbc_drop_job(job)
+        _prod_accounts_drop_job(job)
 
 
-@app.route("/icbc/accounts/preview", methods=["POST"])
+@app.route("/accounts/prod/preview", methods=["POST"])
 @login_required
-def icbc_accounts_preview():
-    """Exporta el cuentas_<x> de ICBC desde la planilla del data entry, descarta lo que ya
+def prod_accounts_preview():
+    """Exporta el cuentas_<x> del cliente desde la planilla del data entry, descarta lo que ya
     está en producción y deja un job con las cuentas nuevas. No escribe nada en producción."""
-    service = (request.get_json(silent=True) or {}).get("service")
-    if service not in ICBC_SERVICES:
-        return jsonify({"status": "error", "message": "Servicio inválido."}), 400
-    _icbc_sweep_stale_jobs()
+    data = request.get_json(silent=True) or {}
+    client_id, service = data.get("client_id"), data.get("service")
+    if client_id not in accounts_runner.ACCOUNT_CLIENTS or service not in accounts_runner.ACCOUNT_SERVICES:
+        return jsonify({"status": "error", "message": "Cliente o servicio inválido."}), 400
+    ok, reason = accounts_runner.supported(client_id, load_client_branches())
+    if not ok:
+        return jsonify({"status": "error", "message": reason})
+    _prod_accounts_sweep_stale_jobs()
     # Errores con 200 + status "error": un 5xx lo reemplaza el túnel de Cloudflare por su
     # página HTML y el front no podría leer el mensaje.
     try:
-        preview = prepare_icbc_preview(service)
+        preview = accounts_runner.prepare_preview(client_id, service)
     except RuntimeError as error:
         return jsonify({"status": "error", "message": str(error)})
     except Exception as error:  # noqa: BLE001
-        print(f"DEBUG: icbc preview failed: {error!r}", flush=True)
+        print(f"DEBUG: prod accounts preview failed: {error!r}", flush=True)
         return jsonify({"status": "error", "message": f"Error inesperado al revisar las cuentas: {error}"})
 
     job_id = uuid4().hex
-    with icbc_jobs_lock:
-        icbc_jobs[job_id] = {
-            "service": service, "csv_path": preview["csv_path"], "temp_dir": preview["temp_dir"],
+    with prod_account_jobs_lock:
+        prod_account_jobs[job_id] = {
+            "client_id": client_id, "service": service,
+            "csv_path": preview["csv_path"], "temp_dir": preview["temp_dir"],
             "user": current_user.name, "created": time.time(), "running": False, "new": preview["new"],
         }
     return jsonify({
-        "status": "success", "job_id": job_id, "service": service,
+        "status": "success", "job_id": job_id, "client_id": client_id, "service": service,
         "total": preview["total"], "existing": preview["existing"], "new": preview["new"],
         "items": preview["items"],
     })
 
 
-@app.route("/icbc/accounts/start", methods=["POST"])
+@app.route("/accounts/prod/start", methods=["POST"])
 @login_required
-def icbc_accounts_start():
-    """Confirma un preview y deja el job listo para /stream-icbc-accounts.
-    Escribe en PRODUCCIÓN, por eso exige confirmación explícita y toma un lock."""
+def prod_accounts_start():
+    """Confirma un preview y deja el job listo para /stream-prod-accounts.
+    Escribe en PRODUCCIÓN, por eso exige confirmación explícita y toma el lock del cliente
+    (el mismo que Validate / Upload / Actualizar: es la misma base de producción)."""
     data = request.get_json(silent=True) or {}
     if data.get("confirm") is not True:
         return jsonify({"status": "error", "message": "Falta la confirmación explícita."}), 400
-    with icbc_jobs_lock:
-        job = icbc_jobs.get(data.get("job_id"))
+    with prod_account_jobs_lock:
+        job = prod_account_jobs.get(data.get("job_id"))
         if not job or job["user"] != current_user.name or job["running"]:
             return jsonify({"status": "error", "message": "El preview venció o ya se ejecutó. Volvé a revisar las cuentas."}), 404
         if job["new"] == 0:
             return jsonify({"status": "error", "message": "No hay cuentas nuevas para cargar."}), 400
-        acquired, entry = locks.acquire(ICBC_LOCK_ID, current_user.name, "icbc-cuentas")
+        acquired, entry = locks.acquire(job["client_id"], current_user.name, "alta-cuentas")
         if not acquired:
             return jsonify({
                 "status": "error",
-                "message": f"El alta de cuentas de ICBC está en uso por {entry['locked_by']}.",
+                "message": f"Este cliente está en uso por {entry['locked_by']} ({entry['flow']}).",
             }), 409
         job["running"] = True
     return jsonify({"status": "accepted", "job_id": data["job_id"]})
 
 
-@app.route("/stream-icbc-accounts")
+@app.route("/stream-prod-accounts")
 @login_required
-def stream_icbc_accounts():
+def stream_prod_accounts():
     job_id = request.args.get("job")
-    with icbc_jobs_lock:
-        job = icbc_jobs.get(job_id)
+    with prod_account_jobs_lock:
+        job = prod_account_jobs.get(job_id)
         if not job or job["user"] != current_user.name or not job["running"]:
             return jsonify({"status": "error", "message": "Job inexistente o no confirmado."}), 404
-        icbc_jobs.pop(job_id)
+        prod_account_jobs.pop(job_id)
 
     def event_stream():
         try:
-            for line in run_icbc_accounts(job["service"], job["csv_path"]):
+            for line in accounts_runner.run_prod_accounts(
+                job["client_id"], job["service"], job["csv_path"], load_client_branches()
+            ):
                 yield f"data: {line}\n\n"
         finally:
-            _icbc_drop_job(job)
-            locks.release(ICBC_LOCK_ID, job["user"])
+            _prod_accounts_drop_job(job)
+            locks.release(job["client_id"], job["user"])
     return Response(stream_with_context(event_stream()), mimetype="text/event-stream")
 
 

@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.0') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.2') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
     <style>
         .forbidden {
@@ -86,13 +86,21 @@
     <div id="validationMetrics" class="err-reports" hidden></div>
     <div id="validateErrors" class="err-reports" hidden></div>
 
-    <h2>ICBC · Alta de cuentas en producción</h2>
-    <section class="card icbc-card">
-        <p class="icbc-note">Toma las cuentas de la planilla de ICBC en el data entry, descarta las que ya están en producción e inserta <strong>solo las nuevas</strong> directo en <code>cmt_icbc_prod</code>, sin recargar nada. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
-        <div class="icbc-row">
-            <div class="icbc-field">
-                <label class="field-label" for="icbcService">Servicio</label>
-                <select id="icbcService" class="field-input" onchange="resetIcbcPreview()">
+    <h2>Alta de cuentas en producción</h2>
+    <section class="card accounts-card">
+        <p class="accounts-note">Para cuando solo hay que <strong>sumar cuentas</strong>: toma las cuentas de la planilla del cliente en el data entry, descarta las que ya están en producción e inserta <strong>solo las nuevas</strong> directo en su base productiva, sin recargar nada. No reemplaza el flujo normal de Validate / Upload, que sigue pisando las bases como siempre. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
+        <div class="accounts-row">
+            <div class="accounts-field">
+                <label class="field-label" for="acctClient">Cliente</label>
+                <select id="acctClient" class="field-input" onchange="resetAccountsPreview()">
+                    {% for c in account_clients %}
+                    <option value="{{ c.id }}" {% if not c.supported %}disabled title="{{ c.reason }}"{% endif %}>{{ c.name }}{% if not c.supported %} (no disponible){% endif %}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="accounts-field">
+                <label class="field-label" for="acctService">Servicio</label>
+                <select id="acctService" class="field-input" onchange="resetAccountsPreview()">
                     <option value="electricidad">Electricidad</option>
                     <option value="gas">Gas</option>
                     <option value="agua">Agua</option>
@@ -101,11 +109,11 @@
                     <option value="otros">Otros</option>
                 </select>
             </div>
-            <button type="button" class="btn-secondary" id="icbcPreviewBtn" onclick="previewIcbcAccounts()">Revisar cuentas nuevas</button>
+            <button type="button" class="btn-secondary" id="acctPreviewBtn" onclick="previewAccounts()">Revisar cuentas nuevas</button>
         </div>
-        <div id="icbcPreview" class="icbc-preview" hidden></div>
-        <pre id="icbcLog" class="icbc-log" hidden></pre>
-        <div id="icbcErrors" class="icbc-errors" hidden></div>
+        <div id="acctPreview" class="accounts-preview" hidden></div>
+        <pre id="acctLog" class="accounts-log" hidden></pre>
+        <div id="acctErrors" class="accounts-errors" hidden></div>
     </section>
 
     <script>
@@ -139,6 +147,7 @@
             box.classList.add('selected');
             selectedId = id;
             updateSheetsButton();
+            syncAccountsClient();
 
             // Save to localStorage
             localStorage.setItem("clientId", id);
@@ -795,39 +804,54 @@
             if (items.length > UNMATCHED_PREVIEW) panel.appendChild(toggle);
         }
 
-        // ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py).
+        // Alta de cuentas nuevas directo en producción (ver accounts_runner.py). Es un añadido: el
+        // flujo normal (Validate / Upload) sigue pisando las bases.
         // 1) "Revisar" exporta la planilla del data entry y descarta lo que ya está en producción;
         // 2) "Cargar" (con confirmación) corre la receta solo con las nuevas.
-        const ICBC_PREVIEW_ROWS = 10;
-        let icbcJobId = null;
+        const ACCOUNTS_PREVIEW_ROWS = 10;
+        let accountsJobId = null;
 
-        function resetIcbcPreview() {
-            icbcJobId = null;
-            const box = document.getElementById("icbcPreview");
+        // Al elegir un cliente arriba, el selector de esta sección lo acompaña (si se puede usar).
+        function syncAccountsClient() {
+            const sel = document.getElementById("acctClient");
+            if (!sel || !selectedId) return;
+            const opt = Array.from(sel.options).find(o => o.value === selectedId && !o.disabled);
+            if (opt && sel.value !== selectedId) { sel.value = selectedId; resetAccountsPreview(); }
+        }
+
+        function resetAccountsPreview() {
+            accountsJobId = null;
+            const box = document.getElementById("acctPreview");
             box.hidden = true;
             box.textContent = "";
         }
 
-        function icbcEl(tag, className, text) {
+        function acctEl(tag, className, text) {
             const el = document.createElement(tag);
             if (className) el.className = className;
             if (text !== undefined) el.textContent = text;
             return el;
         }
 
-        function previewIcbcAccounts() {
-            const serviceSel = document.getElementById("icbcService");
-            const btn = document.getElementById("icbcPreviewBtn");
-            const box = document.getElementById("icbcPreview");
-            resetIcbcPreview();
-            document.getElementById("icbcErrors").hidden = true;
+        function selectedText(id) {
+            const sel = document.getElementById(id);
+            return sel.options[sel.selectedIndex].text.replace(" (no disponible)", "");
+        }
+
+        function previewAccounts() {
+            const clientSel = document.getElementById("acctClient");
+            const serviceSel = document.getElementById("acctService");
+            const btn = document.getElementById("acctPreviewBtn");
+            const box = document.getElementById("acctPreview");
+            resetAccountsPreview();
+            document.getElementById("acctErrors").hidden = true;
             btn.disabled = true;
             box.hidden = false;
             box.textContent = "Exportando la planilla y comparando con producción…";
-            fetch("/icbc/accounts/preview", {
+            fetch("/accounts/prod/preview", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ service: serviceSel.value })
+                body: JSON.stringify({ client_id: clientSel.value, service: serviceSel.value })
             })
                 .then(function (r) {
                     if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
@@ -835,41 +859,41 @@
                 })
                 .then(function (data) {
                     if (data.status !== "success") throw new Error(data.message || "No se pudo revisar.");
-                    renderIcbcPreview(box, data, serviceSel.options[serviceSel.selectedIndex].text);
+                    renderAccountsPreview(box, data, selectedText("acctClient"), selectedText("acctService"));
                 })
                 .catch(function (err) { box.textContent = "Error: " + err.message; })
                 .finally(function () { btn.disabled = false; });
         }
 
-        function renderIcbcPreview(box, data, serviceLabel) {
+        function renderAccountsPreview(box, data, clientName, serviceLabel) {
             box.textContent = "";
-            icbcJobId = data.job_id;
+            accountsJobId = data.job_id;
 
-            const chips = icbcEl("div", "icbc-chips");
+            const chips = acctEl("div", "accounts-chips");
             [["En la planilla", data.total, ""], ["Ya en producción", data.existing, ""],
              ["Nuevas", data.new, data.new ? "chip-accent" : ""]].forEach(function (c) {
-                const chip = icbcEl("span", "chip " + c[2]);
-                chip.appendChild(icbcEl("b", "", String(c[1])));
+                const chip = acctEl("span", "chip " + c[2]);
+                chip.appendChild(acctEl("b", "", String(c[1])));
                 chip.appendChild(document.createTextNode(" " + c[0]));
                 chips.appendChild(chip);
             });
             box.appendChild(chips);
 
             if (!data.new) {
-                box.appendChild(icbcEl("p", "icbc-empty", "No hay cuentas nuevas de " + serviceLabel + ": todo lo de la planilla ya está en producción."));
+                box.appendChild(acctEl("p", "accounts-empty", "No hay cuentas nuevas de " + serviceLabel + " para " + clientName + ": todo lo de la planilla ya está en producción."));
                 return;
             }
 
-            const table = icbcEl("table", "admin-table");
+            const table = acctEl("table", "admin-table");
             const head = table.createTHead().insertRow();
-            ["Sitio", "Cuenta", "Proveedor"].forEach(function (h) { head.appendChild(icbcEl("th", "", h)); });
+            ["Sitio", "Cuenta", "Proveedor"].forEach(function (h) { head.appendChild(acctEl("th", "", h)); });
             const body = table.createTBody();
-            const toggle = icbcEl("button", "btn-link", "");
+            const toggle = acctEl("button", "btn-link", "");
             toggle.type = "button";
             let expanded = false;
             function paint() {
                 body.textContent = "";
-                (expanded ? data.items : data.items.slice(0, ICBC_PREVIEW_ROWS)).forEach(function (it) {
+                (expanded ? data.items : data.items.slice(0, ACCOUNTS_PREVIEW_ROWS)).forEach(function (it) {
                     const tr = body.insertRow();
                     tr.insertCell().textContent = it.id_sitio;
                     tr.insertCell().textContent = it.cuenta;
@@ -880,35 +904,35 @@
             toggle.onclick = function () { expanded = !expanded; paint(); };
             paint();
             box.appendChild(table);
-            if (data.items.length > ICBC_PREVIEW_ROWS) box.appendChild(toggle);
+            if (data.items.length > ACCOUNTS_PREVIEW_ROWS) box.appendChild(toggle);
 
-            const run = icbcEl("button", "btn-danger", "Cargar " + data.new + " cuenta" + (data.new === 1 ? "" : "s") + " en producción");
+            const run = acctEl("button", "btn-danger", "Cargar " + data.new + " cuenta" + (data.new === 1 ? "" : "s") + " en producción");
             run.type = "button";
-            run.onclick = function () { runIcbcAccounts(serviceLabel, data.new, run); };
-            const actions = icbcEl("div", "icbc-actions");
+            run.onclick = function () { runAccounts(clientName, serviceLabel, data.new, run); };
+            const actions = acctEl("div", "accounts-actions");
             actions.appendChild(run);
             box.appendChild(actions);
         }
 
-        function runIcbcAccounts(serviceLabel, count, runBtn) {
-            if (!icbcJobId) return;
-            if (!confirm("Vas a insertar " + count + " cuenta(s) de " + serviceLabel + " DIRECTO en la base PRODUCTIVA de ICBC (cmt_icbc_prod).\n\n¿Continuar?")) return;
+        function runAccounts(clientName, serviceLabel, count, runBtn) {
+            if (!accountsJobId) return;
+            if (!confirm("Vas a insertar " + count + " cuenta(s) de " + serviceLabel + " DIRECTO en la base PRODUCTIVA de " + clientName + ".\n\n¿Continuar?")) return;
 
-            const RESULT = "__ICBC_RESULT__:";
-            const ERRORS = "__ICBC_ERRORS__:";
-            const log = document.getElementById("icbcLog");
-            const errBox = document.getElementById("icbcErrors");
-            const previewBtn = document.getElementById("icbcPreviewBtn");
+            const RESULT = "__ACCOUNTS_RESULT__:";
+            const ERRORS = "__ACCOUNTS_ERRORS__:";
+            const log = document.getElementById("acctLog");
+            const errBox = document.getElementById("acctErrors");
+            const previewBtn = document.getElementById("acctPreviewBtn");
             runBtn.disabled = true; previewBtn.disabled = true;
             log.hidden = false; log.textContent = "";
             errBox.hidden = true; errBox.textContent = "";
             function say(line) { log.textContent += line + "\n"; log.scrollTop = log.scrollHeight; }
-            function done() { previewBtn.disabled = false; resetIcbcPreview(); }
+            function done() { previewBtn.disabled = false; resetAccountsPreview(); }
 
-            fetch("/icbc/accounts/start", {
+            fetch("/accounts/prod/start", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ job_id: icbcJobId, confirm: true })
+                body: JSON.stringify({ job_id: accountsJobId, confirm: true })
             })
                 .then(function (r) {
                     if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
@@ -916,11 +940,11 @@
                 })
                 .then(function (data) {
                     if (data.status !== "accepted") throw new Error(data.message || "No se pudo iniciar.");
-                    const es = new EventSource("/stream-icbc-accounts?job=" + encodeURIComponent(data.job_id));
+                    const es = new EventSource("/stream-prod-accounts?job=" + encodeURIComponent(data.job_id));
                     es.onmessage = function (event) {
                         const line = event.data;
                         if (line.indexOf(ERRORS) === 0) {
-                            try { renderIcbcErrors(errBox, JSON.parse(line.slice(ERRORS.length))); } catch (e) { console.error(e); }
+                            try { renderAccountsErrors(errBox, JSON.parse(line.slice(ERRORS.length))); } catch (e) { console.error(e); }
                             return;
                         }
                         if (line.indexOf(RESULT) === 0) {
@@ -936,7 +960,7 @@
                 .catch(function (err) { say("Error: " + err.message); runBtn.disabled = false; previewBtn.disabled = false; });
         }
 
-        function renderIcbcErrors(box, files) {
+        function renderAccountsErrors(box, files) {
             box.textContent = "";
             box.hidden = !files.length;
             files.forEach(function (file) {
