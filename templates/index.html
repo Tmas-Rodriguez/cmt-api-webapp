@@ -67,6 +67,25 @@
         <div id="refreshErrors" class="err-reports" hidden></div>
     </div>
 
+    <h2>Validar archivos CSV</h2>
+
+    <div class="validation-controls">
+        <button class="import-sheets-btn" id="importSheetsBtn" onclick="importFromSheets()">Importar desde Sheets</button>
+        <button class="import-sheets-btn" id="prepareValidationBtn" onclick="prepareValidation()" hidden
+                title="Exporta los CSV de la planilla del data entry a la carpeta de validación">Preparar para validación</button>
+        <button class="validate-btn" onclick="startGeraStream()">Validate</button>
+        <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
+        <div id="dropZone" class="drop-zone">
+            <p>📁 Drop Excel files</p>
+            <p>or click</p>
+            <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" style="display: none;">
+        </div>
+    </div>
+
+    <div id="validatePanel" class="process-panel" data-state="idle" hidden></div>
+    <div id="validationMetrics" class="err-reports" hidden></div>
+    <div id="validateErrors" class="err-reports" hidden></div>
+
     <h2>ICBC · Alta de cuentas en producción</h2>
     <section class="card icbc-card">
         <p class="icbc-note">Toma las cuentas de la planilla de ICBC en el data entry, descarta las que ya están en producción e inserta <strong>solo las nuevas</strong> directo en <code>cmt_icbc_prod</code>, sin recargar nada. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
@@ -88,25 +107,6 @@
         <pre id="icbcLog" class="icbc-log" hidden></pre>
         <div id="icbcErrors" class="icbc-errors" hidden></div>
     </section>
-
-    <h2>Validar archivos CSV</h2>
-
-    <div class="validation-controls">
-        <button class="import-sheets-btn" id="importSheetsBtn" onclick="importFromSheets()">Importar desde Sheets</button>
-        <button class="import-sheets-btn" id="prepareValidationBtn" onclick="prepareValidation()" hidden
-                title="Exporta los CSV de la planilla del data entry a la carpeta de validación">Preparar para validación</button>
-        <button class="validate-btn" onclick="startGeraStream()">Validate</button>
-        <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
-        <div id="dropZone" class="drop-zone">
-            <p>📁 Drop Excel files</p>
-            <p>or click</p>
-            <input type="file" id="fileInput" multiple accept=".xlsx,.xls,.csv" style="display: none;">
-        </div>
-    </div>
-
-    <div id="validatePanel" class="process-panel" data-state="idle" hidden></div>
-    <div id="validationMetrics" class="err-reports" hidden></div>
-    <div id="validateErrors" class="err-reports" hidden></div>
 
     <script>
         let selectedId = null;

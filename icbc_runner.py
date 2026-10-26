@@ -197,6 +197,9 @@ def prepare_worktree():
         )
         if made.returncode != 0:
             return False, f"No se pudo enlazar node_modules: {made.stdout.strip() or made.stderr.strip()}"
+    # Los entrypoints escriben sus reportes en ./errors/, que está en .gitignore y por eso
+    # no existe en un worktree recién creado (sin la carpeta, writeFileSync fallaría).
+    (ICBC_WORKTREE / "errors").mkdir(exist_ok=True)
     env_script = ESG_REPOSITORY / ".env.script"
     if not env_script.is_file():
         return False, "No existe .env.script en EsgCmt-API (hace falta CLOUD_DATABASE_URL)."
