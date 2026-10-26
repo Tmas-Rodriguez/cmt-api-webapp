@@ -12,11 +12,13 @@ justfile modificado), la receta se corre desde un git worktree aparte con el jus
 tal cual viene en la rama. La carga es todo o nada: si hay errores no se escribe nada.
 """
 
+import csv
+import io
 import json
 import os
 import shutil
 import subprocess
-import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -26,19 +28,116 @@ ICBC_BRANCH = "feat/account-insert-prod-recipes"
 ICBC_REMOTE_REF = f"origin/{ICBC_BRANCH}"
 ICBC_DB = "cmt_icbc_prod"
 
-# servicio (valor del selector) -> receta del justfile de la rama
+# servicio (valor del selector) ->
+#   label      texto en la UI
+#   recipe     receta del justfile de la rama
+#   table      sufijo de cuentas_<x> en la planilla del data entry
+#   key_col    columna del CSV que es el número de cuenta en Mongo (account.number)
+#   collection colección de cuentas en Mongo
+#   mongo_service valor de `service` en Mongo
 ICBC_SERVICES = {
-    "electricidad": ("Electricidad", "account_electricity_prod"),
-    "gas": ("Gas", "account_gas_prod"),
-    "agua": ("Agua", "account_water_prod"),
-    "residuos": ("Residuos", "account_residue_prod"),
-    "combustible": ("Combustible", "account_fuel_prod"),
-    "otros": ("Otros", "account_other_prod"),
+    "electricidad": {"label": "Electricidad", "recipe": "account_electricity_prod", "table": "e",
+                     "key_col": "cuenta", "collection": "account", "mongo_service": "electricidad"},
+    "gas": {"label": "Gas", "recipe": "account_gas_prod", "table": "g",
+            "key_col": "cuenta", "collection": "account", "mongo_service": "gas"},
+    "agua": {"label": "Agua", "recipe": "account_water_prod", "table": "a",
+             "key_col": "cuenta", "collection": "account", "mongo_service": "agua"},
+    "residuos": {"label": "Residuos", "recipe": "account_residue_prod", "table": "r",
+                 "key_col": "nombre_cuenta", "collection": "account_residue", "mongo_service": "residuo"},
+    "combustible": {"label": "Combustible", "recipe": "account_fuel_prod", "table": "c",
+                    "key_col": "nombre_cuenta", "collection": "account_fuel", "mongo_service": "combustible"},
+    "otros": {"label": "Otros", "recipe": "account_other_prod", "table": "o",
+              "key_col": "nombre_cuenta", "collection": "account_other", "mongo_service": "otro"},
 }
+
+# De la app de data entry (ver dentry_client.py) sale el cuentas_<x> de la planilla de ICBC.
+DATA_ENTRY_CLIENT_CODE = "ICBC"
+ENV_SCRIPT = ESG_REPOSITORY / ".env.script"
 
 ERROR_MARKERS = ("PARSING ERRORS", "WRITING ERRORS")
 ERRORS_MARKER = "__ICBC_ERRORS__:"
 RESULT_MARKER = "__ICBC_RESULT__:"
+
+
+def _cloud_mongo_url():
+    """CLOUD_DATABASE_URL activa en el .env.script de EsgCmt-API (solo lectura)."""
+    if ENV_SCRIPT.is_file():
+        for line in ENV_SCRIPT.read_text(encoding="utf-8").splitlines():
+            if line.lstrip().startswith("#"):
+                continue
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "CLOUD_DATABASE_URL":
+                return value.strip().strip('"').strip("'")
+    raise RuntimeError("No se encontró CLOUD_DATABASE_URL en el .env.script de EsgCmt-API.")
+
+
+def fetch_cuentas_csv(service):
+    """cuentas_<x>.csv de la planilla de ICBC, exportado en el momento por el data entry."""
+    import dentry_client
+
+    table = ICBC_SERVICES[service]["table"]
+    return dentry_client.request(f"/internal/cmt/cuentas/{DATA_ENTRY_CLIENT_CODE}/{table}.csv", scope="cuentas")
+
+
+def existing_accounts(service):
+    """{(siteCode, number, supplier)} de las cuentas del servicio ya cargadas en producción."""
+    from pymongo import MongoClient
+
+    cfg = ICBC_SERVICES[service]
+    client = MongoClient(_cloud_mongo_url(), serverSelectionTimeoutMS=10000)
+    try:
+        cursor = client[ICBC_DB][cfg["collection"]].find(
+            {"service": cfg["mongo_service"]}, {"_id": 0, "siteCode": 1, "number": 1, "supplier": 1}
+        )
+        return {(str(d.get("siteCode")), str(d.get("number")), str(d.get("supplier"))) for d in cursor}
+    except Exception as error:  # noqa: BLE001
+        raise RuntimeError(f"No se pudo leer las cuentas de producción: {error}") from error
+    finally:
+        client.close()
+
+
+def split_new_accounts(service, csv_bytes, existing):
+    """Separa del cuentas_<x> de la planilla las cuentas que todavía no están en producción.
+
+    Devuelve {total, existing, new, items, csv_bytes}: csv_bytes solo con las nuevas, mismo
+    encabezado y mismo formato que el export (todo entrecomillado).
+    """
+    key_col = ICBC_SERVICES[service]["key_col"]
+    reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
+    header = reader.fieldnames or []
+    missing = [c for c in ("id_sitio", key_col, "proveedor") if c not in header]
+    if missing:
+        raise RuntimeError(f"El export de la planilla no trae las columnas: {', '.join(missing)}.")
+    rows = [row for row in reader if any((v or "").strip() for v in row.values())]
+    new_rows = [
+        row for row in rows
+        if (row["id_sitio"].strip(), row[key_col].strip(), row["proveedor"].strip()) not in existing
+    ]
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=header, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(new_rows)
+    return {
+        "total": len(rows),
+        "existing": len(rows) - len(new_rows),
+        "new": len(new_rows),
+        "items": [
+            {"id_sitio": r["id_sitio"], "cuenta": r[key_col], "proveedor": r["proveedor"]}
+            for r in new_rows
+        ],
+        "csv_bytes": out.getvalue().encode("utf-8"),
+    }
+
+
+def prepare_preview(service):
+    """Exporta la planilla, descarta lo que ya está en producción y deja el CSV de las nuevas
+    en una carpeta temporal. Devuelve el resumen + temp_dir/csv_path."""
+    result = split_new_accounts(service, fetch_cuentas_csv(service), existing_accounts(service))
+    temp_dir = tempfile.mkdtemp(prefix="icbc_accounts_")
+    csv_path = os.path.join(temp_dir, "cuentas.csv")
+    with open(csv_path, "wb") as handle:
+        handle.write(result.pop("csv_bytes"))
+    return {**result, "temp_dir": temp_dir, "csv_path": csv_path}
 
 
 def validate_csv(path):
@@ -134,7 +233,7 @@ def run_icbc_accounts(service, csv_path):
         yield "Servicio inválido."
         yield RESULT_MARKER + "error"
         return
-    label, recipe = ICBC_SERVICES[service]
+    label, recipe = ICBC_SERVICES[service]["label"], ICBC_SERVICES[service]["recipe"]
 
     yield f"Alta de cuentas ICBC · {label} · base {ICBC_DB} (PRODUCCIÓN)"
 

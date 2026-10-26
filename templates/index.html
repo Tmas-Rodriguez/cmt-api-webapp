@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.0') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.1') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
     <style>
         .forbidden {
@@ -44,6 +45,7 @@
         <div class="box {% if client.name == 'ICBC' %}forbidden{% endif %}"
              id="{{ client.id }}"
              data-token="{{ client.token }}"
+             style="--brand: {{ client.color or '#4f46e5' }}"
              {% if client.name != 'ICBC' %}onclick="if (selectBox('{{ client.id }}') !== false) toggleUnmatched('{{ client.id }}')" {% endif %}>
             <span class="box-name">{{ client.name }}</span>
             <span class="pdf-count-badge {% if client.unmatched == 0 %}zero{% endif %}" data-token="{{ client.token }}"
@@ -66,28 +68,33 @@
     </div>
 
     <h2>ICBC · Alta de cuentas en producción</h2>
-    <div class="icbc-accounts">
-        <p class="icbc-note">Inserta cuentas nuevas <strong>directo en la base productiva</strong> de ICBC (<code>cmt_icbc_prod</code>), sin recargar nada. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
-        <div class="icbc-controls">
-            <select id="icbcService">
-                <option value="electricidad">Electricidad</option>
-                <option value="gas">Gas</option>
-                <option value="agua">Agua</option>
-                <option value="residuos">Residuos</option>
-                <option value="combustible">Combustible</option>
-                <option value="otros">Otros</option>
-            </select>
-            <input type="file" id="icbcCsv" accept=".csv">
-            <button type="button" class="icbc-btn" id="icbcRunBtn" onclick="startIcbcAccounts()">Cargar cuentas en producción</button>
+    <section class="card icbc-card">
+        <p class="icbc-note">Toma las cuentas de la planilla de ICBC en el data entry, descarta las que ya están en producción e inserta <strong>solo las nuevas</strong> directo en <code>cmt_icbc_prod</code>, sin recargar nada. Solo altas: no modifica cuentas existentes y los sitios deben existir. La carga es todo o nada.</p>
+        <div class="icbc-row">
+            <div class="icbc-field">
+                <label class="field-label" for="icbcService">Servicio</label>
+                <select id="icbcService" class="field-input" onchange="resetIcbcPreview()">
+                    <option value="electricidad">Electricidad</option>
+                    <option value="gas">Gas</option>
+                    <option value="agua">Agua</option>
+                    <option value="residuos">Residuos</option>
+                    <option value="combustible">Combustible</option>
+                    <option value="otros">Otros</option>
+                </select>
+            </div>
+            <button type="button" class="btn-secondary" id="icbcPreviewBtn" onclick="previewIcbcAccounts()">Revisar cuentas nuevas</button>
         </div>
+        <div id="icbcPreview" class="icbc-preview" hidden></div>
         <pre id="icbcLog" class="icbc-log" hidden></pre>
         <div id="icbcErrors" class="icbc-errors" hidden></div>
-    </div>
+    </section>
 
     <h2>Validar archivos CSV</h2>
 
     <div class="validation-controls">
         <button class="import-sheets-btn" id="importSheetsBtn" onclick="importFromSheets()">Importar desde Sheets</button>
+        <button class="import-sheets-btn" id="prepareValidationBtn" onclick="prepareValidation()" hidden
+                title="Exporta los CSV de la planilla del data entry a la carpeta de validación">Preparar para validación</button>
         <button class="validate-btn" onclick="startGeraStream()">Validate</button>
         <button class="upload-btn disabled-btn" id="uploadBtn" onclick="startUploadStream()" disabled>Upload</button>
         <div id="dropZone" class="drop-zone">
@@ -106,25 +113,17 @@
         const CURRENT_USER = "{{ current_user.name }}";
         let LOCKS = {};   // client_id -> {locked_by, flow, started_at}, alimentado por /stream-locks
 
-        const colors = {
-            "box1": "#c44c4c", // Santander soft red
-            "box2": "#343a40", // Grupo Petersen charcoal
-            "box3": "#3b5d4c", // Alsea muted dark green
-            "box4": "#4361b3", // La Anonima softer blue
-            "box5": "#868e96", // Mostaza soft gray
-            "box6": "#c0392b", // DIA red
-            "box7": "#e67e22"  // Demo orange
-        };
-
-        // Clientes que ya no se importan desde Google Sheets (viajan por otro camino).
+        // Clientes que ya no se importan desde Google Sheets: su planilla viaja por el data
+        // entry, así que en lugar de "Importar desde Sheets" tienen "Preparar para validación".
+        // (El color de marca de cada cliente viene del servidor: client.color -> --brand.)
         const SHEETS_IMPORT_DISABLED = new Set(["box3"]); // Alsea
 
         function updateSheetsButton() {
-            const btn = document.getElementById("importSheetsBtn");
-            if (!btn) return;
-            const off = SHEETS_IMPORT_DISABLED.has(selectedId);
-            btn.disabled = off;
-            btn.title = off ? "Este cliente ya no se importa desde Sheets" : "";
+            const prepareOnly = SHEETS_IMPORT_DISABLED.has(selectedId);
+            const importBtn = document.getElementById("importSheetsBtn");
+            const prepareBtn = document.getElementById("prepareValidationBtn");
+            if (importBtn) importBtn.hidden = prepareOnly;
+            if (prepareBtn) prepareBtn.hidden = !prepareOnly;
         }
 
         function selectBox(id) {
@@ -134,16 +133,10 @@
                 return false;
             }
 
-            document.querySelectorAll('.box').forEach(b => {
-                b.classList.remove('selected');
-                b.style.backgroundColor = "";
-                b.style.color = "";
-            });
+            document.querySelectorAll('.box').forEach(b => b.classList.remove('selected'));
 
             const box = document.getElementById(id);
             box.classList.add('selected');
-            box.style.backgroundColor = colors[id];
-            box.style.color = "#fff";
             selectedId = id;
             updateSheetsButton();
 
@@ -803,31 +796,123 @@
         }
 
         // ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py).
-        function startIcbcAccounts() {
-            const fileInput = document.getElementById("icbcCsv");
+        // 1) "Revisar" exporta la planilla del data entry y descarta lo que ya está en producción;
+        // 2) "Cargar" (con confirmación) corre la receta solo con las nuevas.
+        const ICBC_PREVIEW_ROWS = 10;
+        let icbcJobId = null;
+
+        function resetIcbcPreview() {
+            icbcJobId = null;
+            const box = document.getElementById("icbcPreview");
+            box.hidden = true;
+            box.textContent = "";
+        }
+
+        function icbcEl(tag, className, text) {
+            const el = document.createElement(tag);
+            if (className) el.className = className;
+            if (text !== undefined) el.textContent = text;
+            return el;
+        }
+
+        function previewIcbcAccounts() {
             const serviceSel = document.getElementById("icbcService");
-            const btn = document.getElementById("icbcRunBtn");
-            const log = document.getElementById("icbcLog");
-            const errBox = document.getElementById("icbcErrors");
-            if (!fileInput.files.length) { alert("Elegí el CSV con las cuentas nuevas."); return; }
-            const serviceLabel = serviceSel.options[serviceSel.selectedIndex].text;
-            if (!confirm("Vas a insertar cuentas de " + serviceLabel + " DIRECTO en la base PRODUCTIVA de ICBC (cmt_icbc_prod) con el archivo \"" + fileInput.files[0].name + "\".\n\n¿Continuar?")) return;
+            const btn = document.getElementById("icbcPreviewBtn");
+            const box = document.getElementById("icbcPreview");
+            resetIcbcPreview();
+            document.getElementById("icbcErrors").hidden = true;
+            btn.disabled = true;
+            box.hidden = false;
+            box.textContent = "Exportando la planilla y comparando con producción…";
+            fetch("/icbc/accounts/preview", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ service: serviceSel.value })
+            })
+                .then(function (r) {
+                    if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
+                    return readJson(r);
+                })
+                .then(function (data) {
+                    if (data.status !== "success") throw new Error(data.message || "No se pudo revisar.");
+                    renderIcbcPreview(box, data, serviceSel.options[serviceSel.selectedIndex].text);
+                })
+                .catch(function (err) { box.textContent = "Error: " + err.message; })
+                .finally(function () { btn.disabled = false; });
+        }
+
+        function renderIcbcPreview(box, data, serviceLabel) {
+            box.textContent = "";
+            icbcJobId = data.job_id;
+
+            const chips = icbcEl("div", "icbc-chips");
+            [["En la planilla", data.total, ""], ["Ya en producción", data.existing, ""],
+             ["Nuevas", data.new, data.new ? "chip-accent" : ""]].forEach(function (c) {
+                const chip = icbcEl("span", "chip " + c[2]);
+                chip.appendChild(icbcEl("b", "", String(c[1])));
+                chip.appendChild(document.createTextNode(" " + c[0]));
+                chips.appendChild(chip);
+            });
+            box.appendChild(chips);
+
+            if (!data.new) {
+                box.appendChild(icbcEl("p", "icbc-empty", "No hay cuentas nuevas de " + serviceLabel + ": todo lo de la planilla ya está en producción."));
+                return;
+            }
+
+            const table = icbcEl("table", "admin-table");
+            const head = table.createTHead().insertRow();
+            ["Sitio", "Cuenta", "Proveedor"].forEach(function (h) { head.appendChild(icbcEl("th", "", h)); });
+            const body = table.createTBody();
+            const toggle = icbcEl("button", "btn-link", "");
+            toggle.type = "button";
+            let expanded = false;
+            function paint() {
+                body.textContent = "";
+                (expanded ? data.items : data.items.slice(0, ICBC_PREVIEW_ROWS)).forEach(function (it) {
+                    const tr = body.insertRow();
+                    tr.insertCell().textContent = it.id_sitio;
+                    tr.insertCell().textContent = it.cuenta;
+                    tr.insertCell().textContent = it.proveedor;
+                });
+                toggle.textContent = expanded ? "Ver menos" : "Ver todas (" + data.items.length + ")";
+            }
+            toggle.onclick = function () { expanded = !expanded; paint(); };
+            paint();
+            box.appendChild(table);
+            if (data.items.length > ICBC_PREVIEW_ROWS) box.appendChild(toggle);
+
+            const run = icbcEl("button", "btn-danger", "Cargar " + data.new + " cuenta" + (data.new === 1 ? "" : "s") + " en producción");
+            run.type = "button";
+            run.onclick = function () { runIcbcAccounts(serviceLabel, data.new, run); };
+            const actions = icbcEl("div", "icbc-actions");
+            actions.appendChild(run);
+            box.appendChild(actions);
+        }
+
+        function runIcbcAccounts(serviceLabel, count, runBtn) {
+            if (!icbcJobId) return;
+            if (!confirm("Vas a insertar " + count + " cuenta(s) de " + serviceLabel + " DIRECTO en la base PRODUCTIVA de ICBC (cmt_icbc_prod).\n\n¿Continuar?")) return;
 
             const RESULT = "__ICBC_RESULT__:";
             const ERRORS = "__ICBC_ERRORS__:";
-            btn.disabled = true;
+            const log = document.getElementById("icbcLog");
+            const errBox = document.getElementById("icbcErrors");
+            const previewBtn = document.getElementById("icbcPreviewBtn");
+            runBtn.disabled = true; previewBtn.disabled = true;
             log.hidden = false; log.textContent = "";
             errBox.hidden = true; errBox.textContent = "";
             function say(line) { log.textContent += line + "\n"; log.scrollTop = log.scrollHeight; }
+            function done() { previewBtn.disabled = false; resetIcbcPreview(); }
 
-            const form = new FormData();
-            form.append("service", serviceSel.value);
-            form.append("file", fileInput.files[0]);
-            form.append("confirm", "true");
-            fetch("/icbc/accounts/start", { method: "POST", body: form })
+            fetch("/icbc/accounts/start", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ job_id: icbcJobId, confirm: true })
+            })
                 .then(function (r) {
                     if (r.status === 401) { window.location.href = "/login"; throw new Error("Sesión expirada"); }
-                    return r.json();
+                    return readJson(r);
                 })
                 .then(function (data) {
                     if (data.status !== "accepted") throw new Error(data.message || "No se pudo iniciar.");
@@ -840,15 +925,15 @@
                         }
                         if (line.indexOf(RESULT) === 0) {
                             es.close();
-                            btn.disabled = false;
                             say(line.slice(RESULT.length) === "ok" ? "✓ Listo." : "✗ Terminó con errores.");
+                            done();
                             return;
                         }
                         say(line);
                     };
-                    es.onerror = function () { es.close(); btn.disabled = false; };
+                    es.onerror = function () { es.close(); done(); };
                 })
-                .catch(function (err) { say("Error: " + err.message); btn.disabled = false; });
+                .catch(function (err) { say("Error: " + err.message); runBtn.disabled = false; previewBtn.disabled = false; });
         }
 
         function renderIcbcErrors(box, files) {
@@ -1284,6 +1369,63 @@
             })
             .catch(error => {
                 tracker.fail("Error: " + error.message);
+            });
+        }
+
+        // Alsea: en vez de Sheets, exporta los CSV de la planilla del data entry a
+        // providers/<cliente>/csv_<alias>_<fecha>/ (mismo efecto que "Preparar para validación" allá).
+        function prepareValidation() {
+            if (!selectedId) {
+                alert("Seleccioná un cliente primero.");
+                return;
+            }
+            if (!SHEETS_IMPORT_DISABLED.has(selectedId)) {
+                alert("Este cliente se importa desde Sheets.");
+                return;
+            }
+            resetDownstreamButtons();
+            validateTracker = new ProcessTracker(document.getElementById("validatePanel"), {
+                title: "Preparar para validación",
+                steps: [{ label: "Exportando la planilla a CSV", match: [] }],
+                success: [],
+                error: []
+            });
+            const tracker = validateTracker;
+            tracker._advanceTo(0);
+
+            fetch("/prepare-validation", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ selected_id: selectedId })
+            })
+            .then(response => {
+                if (response.status === 401) {
+                    window.location.href = "/login";
+                    throw new Error("Session expired");
+                }
+                return readJson(response);
+            })
+            .then(data => {
+                if (data.status !== "success") {
+                    tracker.fail(data.message || "No se pudo preparar la planilla.");
+                    return;
+                }
+                tracker.note("Carpeta lista: " + data.folder + " (" + data.tables + " tablas)");
+                if (data.replaced) tracker.note("Reemplazó la carpeta de hoy: " + data.replaced);
+                (data.moved_to_old || []).forEach(m => tracker.note("Movida a old: " + m));
+                tracker.succeed();
+                tracker.note('Ahora podés hacer click en "Validate".');
+            })
+            .catch(error => {
+                tracker.fail("Error: " + error.message);
+            });
+        }
+
+        // Respuesta JSON o un error legible (p. ej. si el túnel devuelve una página HTML).
+        function readJson(response) {
+            return response.text().then(function (text) {
+                try { return JSON.parse(text); }
+                catch (e) { throw new Error("Respuesta inesperada del servidor (HTTP " + response.status + ")."); }
             });
         }
 

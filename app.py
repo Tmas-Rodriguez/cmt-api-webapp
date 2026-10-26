@@ -22,10 +22,12 @@ from gera_runner import run_gera
 from refresh_runners.refresh_runner import run_refresh
 from upload_runner import run_upload
 from sheets_runner import import_sheet
-from icbc_runner import run_icbc_accounts, validate_csv, ICBC_SERVICES, RESULT_MARKER as ICBC_RESULT_MARKER
+import dentry_client
+from icbc_runner import run_icbc_accounts, prepare_preview as prepare_icbc_preview, ICBC_SERVICES
 from file_handler import save_file_to_organized_folder, save_local_file_to_organized_folder
 import aws_sso
 import locks
+import dentry_auth
 
 app = Flask(__name__)
 
@@ -96,13 +98,13 @@ gera_state = {"output_folder": None, "start_time": None}
 refresh_state = {"start_time": None}
 
 companies = [
-    {"id": "box1", "name": "Santander", "token": "santander"},
-    {"id": "box2", "name": "Grupo Petersen", "token": "gp"},
-    {"id": "box3", "name": "Alsea", "token": "alsea"},
-    {"id": "box4", "name": "La Anonima", "token": "laanonima"},
-    {"id": "box5", "name": "Mostaza", "token": "mostaza"},
-    {"id": "box6", "name": "DIA", "token": "dia"},
-    {"id": "box7", "name": "Demo", "token": "demo"},
+    {"id": "box1", "name": "Santander", "token": "santander", "color": "#c44c4c"},
+    {"id": "box2", "name": "Grupo Petersen", "token": "gp", "color": "#343a40"},
+    {"id": "box3", "name": "Alsea", "token": "alsea", "color": "#3b5d4c"},
+    {"id": "box4", "name": "La Anonima", "token": "laanonima", "color": "#4361b3"},
+    {"id": "box5", "name": "Mostaza", "token": "mostaza", "color": "#868e96"},
+    {"id": "box6", "name": "DIA", "token": "dia", "color": "#c0392b"},
+    {"id": "box7", "name": "Demo", "token": "demo", "color": "#e67e22"},
 ]
 
 
@@ -139,26 +141,20 @@ login_manager.init_app(app)
 @login_manager.unauthorized_handler
 def unauthorized():
     """Handle unauthorized requests - return JSON for AJAX, redirect for browser"""
-    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/icbc/', '/stream-icbc-accounts', '/import-from-sheets/status/')):
+    if request.is_json or request.path.startswith(('/stream-', '/download-', '/upload-', '/run-errors/', '/pdf-unmatched-counts', '/pdf-unmatched/', '/icbc/', '/stream-icbc-accounts', '/prepare-validation', '/import-from-sheets/status/')):
         return jsonify({"status": "error", "message": "Unauthorized"}), 401
     return redirect(url_for("login"))
 
-# Dummy user (replace with DB lookup)
+# Usuarios: los admins del data entry (ver dentry_auth.py)
 class User(UserMixin):
-    def __init__(self, id, name, password):
-        self.id = id
-        self.name = name
-        self.password = password
-
-users = {
-    "tomi": User(id="tomi", name="Tomi", password="tomipass"),
-    "marce": User(id="marce", name="Marce", password="marcepass"),
-    "santi": User(id="santi", name="Santi", password="santipass"),
-}
+    """Admin del data entry (ver dentry_auth.py); no se guardan usuarios acá."""
+    def __init__(self, username):
+        self.id = username
+        self.name = username
 
 @login_manager.user_loader
 def load_user(user_id):
-    return users.get(user_id)
+    return User(user_id) if dentry_auth.get_admin(user_id) else None
 
 @app.route("/")
 @login_required
@@ -197,14 +193,34 @@ def pdf_unmatched(token):
     })
 
 
+@app.route("/sso")
+def sso_login():
+    """Entrada desde el data entry (iframe de /admin/cmt): token firmado de un solo uso.
+    Si algo falla cae al login normal; el token no queda en la URL final."""
+    try:
+        username = dentry_auth.consume_sso_token(request.args.get("token", ""))
+    except dentry_auth.AuthUnavailable as error:
+        print(f"DEBUG: sso unavailable: {error}", flush=True)
+        username = None
+    if username:
+        login_user(User(username))
+        return redirect(url_for("index"))
+    return redirect(url_for("login"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        user = users.get(username)
-        if user and password == user.password:
-            login_user(user)
+        try:
+            authenticated = dentry_auth.authenticate(username, password)
+        except dentry_auth.AuthUnavailable as error:
+            print(f"DEBUG: dentry_auth unavailable: {error}", flush=True)
+            flash("No se pudo consultar la base de usuarios. Probá de nuevo en unos minutos.")
+            return render_template("login.html")
+        if authenticated:
+            login_user(User(authenticated))
             return redirect(url_for("index"))
         flash("Invalid credentials")
     return render_template("login.html")
@@ -705,44 +721,79 @@ def run_errors(flow):
 
 # ---- ICBC: alta de cuentas nuevas directo en producción (ver icbc_runner.py) ----
 ICBC_LOCK_ID = "icbc"
+ICBC_PREVIEW_TTL_SECONDS = 15 * 60
 icbc_jobs = {}
 icbc_jobs_lock = threading.Lock()
+
+
+def _icbc_drop_job(job):
+    shutil.rmtree(job["temp_dir"], ignore_errors=True)
+
+
+def _icbc_sweep_stale_jobs():
+    """Borra los previews que nadie confirmó (más viejos que ICBC_PREVIEW_TTL_SECONDS)."""
+    cutoff = time.time() - ICBC_PREVIEW_TTL_SECONDS
+    with icbc_jobs_lock:
+        stale = [job_id for job_id, job in icbc_jobs.items() if job["created"] < cutoff and not job["running"]]
+        dropped = [icbc_jobs.pop(job_id) for job_id in stale]
+    for job in dropped:
+        _icbc_drop_job(job)
+
+
+@app.route("/icbc/accounts/preview", methods=["POST"])
+@login_required
+def icbc_accounts_preview():
+    """Exporta el cuentas_<x> de ICBC desde la planilla del data entry, descarta lo que ya
+    está en producción y deja un job con las cuentas nuevas. No escribe nada en producción."""
+    service = (request.get_json(silent=True) or {}).get("service")
+    if service not in ICBC_SERVICES:
+        return jsonify({"status": "error", "message": "Servicio inválido."}), 400
+    _icbc_sweep_stale_jobs()
+    # Errores con 200 + status "error": un 5xx lo reemplaza el túnel de Cloudflare por su
+    # página HTML y el front no podría leer el mensaje.
+    try:
+        preview = prepare_icbc_preview(service)
+    except RuntimeError as error:
+        return jsonify({"status": "error", "message": str(error)})
+    except Exception as error:  # noqa: BLE001
+        print(f"DEBUG: icbc preview failed: {error!r}", flush=True)
+        return jsonify({"status": "error", "message": f"Error inesperado al revisar las cuentas: {error}"})
+
+    job_id = uuid4().hex
+    with icbc_jobs_lock:
+        icbc_jobs[job_id] = {
+            "service": service, "csv_path": preview["csv_path"], "temp_dir": preview["temp_dir"],
+            "user": current_user.name, "created": time.time(), "running": False, "new": preview["new"],
+        }
+    return jsonify({
+        "status": "success", "job_id": job_id, "service": service,
+        "total": preview["total"], "existing": preview["existing"], "new": preview["new"],
+        "items": preview["items"],
+    })
 
 
 @app.route("/icbc/accounts/start", methods=["POST"])
 @login_required
 def icbc_accounts_start():
-    """Recibe el CSV, lo valida y deja un job listo para /stream-icbc-accounts.
+    """Confirma un preview y deja el job listo para /stream-icbc-accounts.
     Escribe en PRODUCCIÓN, por eso exige confirmación explícita y toma un lock."""
-    if request.form.get("confirm") != "true":
+    data = request.get_json(silent=True) or {}
+    if data.get("confirm") is not True:
         return jsonify({"status": "error", "message": "Falta la confirmación explícita."}), 400
-    service = request.form.get("service")
-    if service not in ICBC_SERVICES:
-        return jsonify({"status": "error", "message": "Servicio inválido."}), 400
-    upload = request.files.get("file")
-    if not upload or not upload.filename.lower().endswith(".csv"):
-        return jsonify({"status": "error", "message": "Subí un archivo .csv."}), 400
-
-    temp_dir = tempfile.mkdtemp(prefix="icbc_accounts_")
-    csv_path = os.path.join(temp_dir, "cuentas.csv")
-    upload.save(csv_path)
-    ok, message = validate_csv(csv_path)
-    if not ok:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return jsonify({"status": "error", "message": message}), 400
-
-    acquired, entry = locks.acquire(ICBC_LOCK_ID, current_user.name, "icbc-cuentas")
-    if not acquired:
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return jsonify({
-            "status": "error",
-            "message": f"El alta de cuentas de ICBC está en uso por {entry['locked_by']}.",
-        }), 409
-
-    job_id = uuid4().hex
     with icbc_jobs_lock:
-        icbc_jobs[job_id] = {"service": service, "csv_path": csv_path, "temp_dir": temp_dir, "user": current_user.name}
-    return jsonify({"status": "accepted", "job_id": job_id})
+        job = icbc_jobs.get(data.get("job_id"))
+        if not job or job["user"] != current_user.name or job["running"]:
+            return jsonify({"status": "error", "message": "El preview venció o ya se ejecutó. Volvé a revisar las cuentas."}), 404
+        if job["new"] == 0:
+            return jsonify({"status": "error", "message": "No hay cuentas nuevas para cargar."}), 400
+        acquired, entry = locks.acquire(ICBC_LOCK_ID, current_user.name, "icbc-cuentas")
+        if not acquired:
+            return jsonify({
+                "status": "error",
+                "message": f"El alta de cuentas de ICBC está en uso por {entry['locked_by']}.",
+            }), 409
+        job["running"] = True
+    return jsonify({"status": "accepted", "job_id": data["job_id"]})
 
 
 @app.route("/stream-icbc-accounts")
@@ -750,18 +801,47 @@ def icbc_accounts_start():
 def stream_icbc_accounts():
     job_id = request.args.get("job")
     with icbc_jobs_lock:
-        job = icbc_jobs.pop(job_id, None)
-    if not job or job["user"] != current_user.name:
-        return jsonify({"status": "error", "message": "Job inexistente o ya ejecutado."}), 404
+        job = icbc_jobs.get(job_id)
+        if not job or job["user"] != current_user.name or not job["running"]:
+            return jsonify({"status": "error", "message": "Job inexistente o no confirmado."}), 404
+        icbc_jobs.pop(job_id)
 
     def event_stream():
         try:
             for line in run_icbc_accounts(job["service"], job["csv_path"]):
                 yield f"data: {line}\n\n"
         finally:
-            shutil.rmtree(job["temp_dir"], ignore_errors=True)
+            _icbc_drop_job(job)
             locks.release(ICBC_LOCK_ID, job["user"])
     return Response(stream_with_context(event_stream()), mimetype="text/event-stream")
+
+
+# Clientes cuya planilla viaja por el data entry en vez de Google Sheets: en lugar de
+# "Importar desde Sheets" tienen "Preparar para validación" (exporta los CSV a providers/).
+PREPARE_VALIDATION_CLIENTS = {"box3": "ALSEA"}  # id de caja -> código de cliente en el data entry
+
+
+@app.route("/prepare-validation", methods=["POST"])
+@login_required
+def prepare_validation():
+    """Igual que el botón "Preparar para validación" del data entry: deja los CSV de la
+    planilla en providers/<cliente>/csv_<alias>_<fecha>/ para que Validate los tome."""
+    selected_id = (request.get_json(silent=True) or {}).get("selected_id")
+    code = PREPARE_VALIDATION_CLIENTS.get(selected_id)
+    if not code:
+        return jsonify({"status": "error", "message": "Este cliente no se prepara desde el data entry."}), 400
+    try:
+        result = json.loads(dentry_client.request(
+            f"/internal/cmt/prepare_validation/{code}", scope="prepare", method="POST", timeout=180))
+    except (RuntimeError, ValueError) as error:
+        return jsonify({"status": "error", "message": str(error)})
+    return jsonify({
+        "status": "success",
+        "folder": result.get("folder"),
+        "tables": result.get("tables"),
+        "moved_to_old": result.get("moved_to_old") or [],
+        "replaced": result.get("replaced"),
+    })
 
 
 @app.route("/import-from-sheets", methods=["POST"])
