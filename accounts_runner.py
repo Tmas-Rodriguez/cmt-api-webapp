@@ -14,7 +14,8 @@ EsgCmt-API. Para no mover esa rama ni tocar los cambios locales (p. ej. el justf
 modificado), la receta se corre desde un git worktree aparte con el justfile tal cual viene
 en la rama. La carga es todo o nada: si hay errores no se escribe nada.
 
-Solo se habilitan los clientes de patron v1.5: el parser de cuentas de v1.6 es distinto
+Por ahora solo para ICBC y Alsea (ACCOUNT_CLIENTS): el resto de los clientes se suma acá cuando
+haga falta. Además tienen que ser de patron v1.5: el parser de cuentas de v1.6 es distinto
 (ver supported()) y las recetas de esa rama no están pensadas para esa versión.
 """
 
@@ -40,13 +41,10 @@ RECIPES_PATRON_BRANCH = "patron-v1.5"   # la rama de recetas parte de esta versi
 #   code  código del cliente en el data entry (CLIENT_BY_CODE)
 #   db    base de producción en Mongo
 #   patron_branch  versión del patrón si no figura en client_branches.json
+# Solo ICBC y Alsea por ahora: los demás clientes (box1 Santander, box2 GP, box4 La Anonima,
+# box5 Mostaza, box6 DIA) no aparecen en la lista y el servidor los rechaza.
 ACCOUNT_CLIENTS = {
-    "box1": {"name": "Santander", "code": "SAN", "db": "cmt_santander_prod", "patron_branch": "patron-v1.5"},
-    "box2": {"name": "Grupo Petersen", "code": "GP", "db": "cmt_gp_prod", "patron_branch": "patron-v1.5"},
     "box3": {"name": "Alsea", "code": "ALSEA", "db": "cmt_alsea_prod", "patron_branch": "patron-v1.5"},
-    "box4": {"name": "La Anonima", "code": "LA", "db": "cmt_laanonima_prod", "patron_branch": "patron-v1.5"},
-    "box5": {"name": "Mostaza", "code": "MTZ", "db": "cmt_mostaza_prod", "patron_branch": "patron-v1.6"},
-    "box6": {"name": "DIA", "code": "DIA", "db": "cmt_dia_prod", "patron_branch": "patron-v1.6"},
     "icbc": {"name": "ICBC", "code": "ICBC", "db": "cmt_icbc_prod", "patron_branch": "patron-v1.5"},
 }
 
