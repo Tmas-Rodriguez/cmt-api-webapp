@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <title>CMT - DB manager</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.1') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.3') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
     <style>
         .forbidden {
@@ -865,13 +865,42 @@
                 .finally(function () { btn.disabled = false; });
         }
 
+        // Tabla de cuentas con "Ver todas (N)"; extra = columna opcional (p. ej. facturas).
+        function acctTable(items, columns, rowsToShow) {
+            const wrap = document.createElement("div");
+            const table = acctEl("table", "admin-table");
+            const head = table.createTHead().insertRow();
+            columns.forEach(function (c) { head.appendChild(acctEl("th", "", c.label)); });
+            const body = table.createTBody();
+            const toggle = acctEl("button", "btn-link", "");
+            toggle.type = "button";
+            let expanded = false;
+            function paint() {
+                body.textContent = "";
+                (expanded ? items : items.slice(0, rowsToShow)).forEach(function (it) {
+                    const tr = body.insertRow();
+                    columns.forEach(function (c) { tr.insertCell().textContent = c.value(it); });
+                });
+                toggle.textContent = expanded ? "Ver menos" : "Ver todas (" + items.length + ")";
+            }
+            toggle.onclick = function () { expanded = !expanded; paint(); };
+            paint();
+            wrap.appendChild(table);
+            if (items.length > rowsToShow) wrap.appendChild(toggle);
+            return wrap;
+        }
+
+        // La comparación es total, en los dos sentidos: lo que falta en producción (se puede
+        // cargar) y lo que sobra en producción (solo se informa; esta carga nunca borra ni edita).
         function renderAccountsPreview(box, data, clientName, serviceLabel) {
             box.textContent = "";
             accountsJobId = data.job_id;
+            const onlyProd = data.only_prod || [];
 
             const chips = acctEl("div", "accounts-chips");
-            [["En la planilla", data.total, ""], ["Ya en producción", data.existing, ""],
-             ["Nuevas", data.new, data.new ? "chip-accent" : ""]].forEach(function (c) {
+            [["En la planilla", data.total, ""], ["En producción", data.prod_total, ""],
+             ["Nuevas", data.new, data.new ? "chip-accent" : ""],
+             ["Solo en producción", onlyProd.length, onlyProd.length ? "chip-warn" : ""]].forEach(function (c) {
                 const chip = acctEl("span", "chip " + c[2]);
                 chip.appendChild(acctEl("b", "", String(c[1])));
                 chip.appendChild(document.createTextNode(" " + c[0]));
@@ -879,39 +908,33 @@
             });
             box.appendChild(chips);
 
-            if (!data.new) {
+            if (data.new) {
+                box.appendChild(acctEl("div", "accounts-subtitle", "Nuevas: están en la planilla y no en producción"));
+                box.appendChild(acctTable(data.new ? data.items : [], [
+                    { label: "Sitio", value: function (i) { return i.id_sitio; } },
+                    { label: "Cuenta", value: function (i) { return i.cuenta; } },
+                    { label: "Proveedor", value: function (i) { return i.proveedor; } }
+                ], ACCOUNTS_PREVIEW_ROWS));
+                const run = acctEl("button", "btn-danger", "Cargar " + data.new + " cuenta" + (data.new === 1 ? "" : "s") + " en producción");
+                run.type = "button";
+                run.onclick = function () { runAccounts(clientName, serviceLabel, data.new, run); };
+                const actions = acctEl("div", "accounts-actions");
+                actions.appendChild(run);
+                box.appendChild(actions);
+            } else {
                 box.appendChild(acctEl("p", "accounts-empty", "No hay cuentas nuevas de " + serviceLabel + " para " + clientName + ": todo lo de la planilla ya está en producción."));
-                return;
             }
 
-            const table = acctEl("table", "admin-table");
-            const head = table.createTHead().insertRow();
-            ["Sitio", "Cuenta", "Proveedor"].forEach(function (h) { head.appendChild(acctEl("th", "", h)); });
-            const body = table.createTBody();
-            const toggle = acctEl("button", "btn-link", "");
-            toggle.type = "button";
-            let expanded = false;
-            function paint() {
-                body.textContent = "";
-                (expanded ? data.items : data.items.slice(0, ACCOUNTS_PREVIEW_ROWS)).forEach(function (it) {
-                    const tr = body.insertRow();
-                    tr.insertCell().textContent = it.id_sitio;
-                    tr.insertCell().textContent = it.cuenta;
-                    tr.insertCell().textContent = it.proveedor;
-                });
-                toggle.textContent = expanded ? "Ver menos" : "Ver todas (" + data.items.length + ")";
+            if (onlyProd.length) {
+                box.appendChild(acctEl("div", "accounts-subtitle accounts-subtitle-warn", "Solo en producción: no están en la planilla"));
+                box.appendChild(acctEl("p", "accounts-empty", "Esta carga no las modifica ni las borra. Si deberían salir de producción, hay que quitarlas aparte; ojo con las que tienen facturas."));
+                box.appendChild(acctTable(onlyProd, [
+                    { label: "Sitio", value: function (i) { return i.id_sitio; } },
+                    { label: "Cuenta", value: function (i) { return i.cuenta; } },
+                    { label: "Proveedor", value: function (i) { return i.proveedor; } },
+                    { label: "Facturas", value: function (i) { return i.facturas === null || i.facturas === undefined ? "—" : String(i.facturas); } }
+                ], ACCOUNTS_PREVIEW_ROWS));
             }
-            toggle.onclick = function () { expanded = !expanded; paint(); };
-            paint();
-            box.appendChild(table);
-            if (data.items.length > ACCOUNTS_PREVIEW_ROWS) box.appendChild(toggle);
-
-            const run = acctEl("button", "btn-danger", "Cargar " + data.new + " cuenta" + (data.new === 1 ? "" : "s") + " en producción");
-            run.type = "button";
-            run.onclick = function () { runAccounts(clientName, serviceLabel, data.new, run); };
-            const actions = acctEl("div", "accounts-actions");
-            actions.appendChild(run);
-            box.appendChild(actions);
         }
 
         function runAccounts(clientName, serviceLabel, count, runBtn) {

@@ -204,6 +204,8 @@ table.admin-table td { padding: 8px; border-bottom: 1px solid var(--field); colo
 .chip b { color: var(--ink-2); font-weight: 600; }
 .chip.chip-accent { background: var(--accent-soft); color: var(--accent); }
 .chip.chip-accent b { color: var(--accent-hover); }
+.chip.chip-warn { background: var(--warn-soft); color: var(--warn); }
+.chip.chip-warn b { color: var(--warn); }
 
 /* ----- Alta de cuentas en producción ----- */
 .accounts-card { padding: 20px; }
@@ -215,6 +217,8 @@ table.admin-table td { padding: 8px; border-bottom: 1px solid var(--field); colo
 .accounts-preview { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 0.75rem; color: var(--muted-2); }
 .accounts-chips { margin-bottom: 4px; }
 .accounts-empty { margin: 8px 0 0; }
+.accounts-subtitle { margin: 14px 0 2px; font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted-2); }
+.accounts-subtitle-warn { color: var(--warn); }
 .accounts-actions { margin-top: 14px; }
 .accounts-log { background: #0f172a; color: #e2e8f0; border-radius: 8px; font-size: 0.75rem; }
 .accounts-errors details { background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--danger); border-radius: 8px; }

@@ -70,6 +70,13 @@ ACCOUNT_SERVICES = {
               "key_col": "nombre_cuenta", "collection": "account_other", "mongo_service": "otro"},
 }
 
+# Colección de facturas de cada servicio en Mongo (para avisar si una cuenta tiene facturas).
+INVOICE_COLLECTIONS = {
+    "electricidad": "invoice", "gas": "invoice", "agua": "invoice",
+    "residuo": "invoice_residue", "combustible": "invoice_fuel", "otro": "invoice_other",
+}
+MAX_INVOICE_COUNTS = 100   # solo se cuentan las facturas de las primeras N cuentas "solo en producción"
+
 ENV_SCRIPT = ESG_REPOSITORY / ".env.script"
 
 ERROR_MARKERS = ("PARSING ERRORS", "WRITING ERRORS")
@@ -142,11 +149,38 @@ def existing_accounts(client_id, service):
         client.close()
 
 
+def count_invoices(client_id, service, keys):
+    """{(siteCode, number, supplier): cantidad de facturas} para las primeras MAX_INVOICE_COUNTS claves.
+
+    Sirve para saber si una cuenta que sobra en producción tiene facturas colgando. Las demás
+    claves quedan en None (no se contaron).
+    """
+    from pymongo import MongoClient
+
+    cfg = ACCOUNT_SERVICES[service]
+    counts = {key: None for key in keys}
+    client = MongoClient(_cloud_mongo_url(), serverSelectionTimeoutMS=10000)
+    try:
+        collection = client[ACCOUNT_CLIENTS[client_id]["db"]][INVOICE_COLLECTIONS[cfg["mongo_service"]]]
+        for site_code, number, supplier in keys[:MAX_INVOICE_COUNTS]:
+            counts[(site_code, number, supplier)] = collection.count_documents({
+                "service": cfg["mongo_service"], "siteCode": site_code,
+                "accountNumber": number, "supplier": supplier,
+            })
+    except Exception as error:  # noqa: BLE001
+        raise RuntimeError(f"No se pudieron contar las facturas de las cuentas de producción: {error}") from error
+    finally:
+        client.close()
+    return counts
+
+
 def split_new_accounts(service, csv_bytes, existing):
     """Separa del cuentas_<x> de la planilla las cuentas que todavía no están en producción.
 
-    Devuelve {total, existing, new, items, csv_bytes}: csv_bytes solo con las nuevas, mismo
-    encabezado y mismo formato que el export (todo entrecomillado).
+    Devuelve {total, prod_total, existing, new, items, only_prod_keys, csv_bytes}: csv_bytes
+    solo con las nuevas, mismo encabezado y mismo formato que el export (todo entrecomillado).
+    La comparación es total, en los dos sentidos: además de las nuevas (en la planilla y no en
+    producción) devuelve las claves "solo en producción" (en producción y no en la planilla).
     """
     key_col = ACCOUNT_SERVICES[service]["key_col"]
     reader = csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig")))
@@ -155,16 +189,17 @@ def split_new_accounts(service, csv_bytes, existing):
     if missing:
         raise RuntimeError(f"El export de la planilla no trae las columnas: {', '.join(missing)}.")
     rows = [row for row in reader if any((v or "").strip() for v in row.values())]
-    new_rows = [
-        row for row in rows
-        if (row["id_sitio"].strip(), row[key_col].strip(), row["proveedor"].strip()) not in existing
-    ]
+    key_of = lambda row: (row["id_sitio"].strip(), row[key_col].strip(), row["proveedor"].strip())  # noqa: E731
+    planilla_keys = {key_of(row) for row in rows}
+    new_rows = [row for row in rows if key_of(row) not in existing]
     out = io.StringIO()
     writer = csv.DictWriter(out, fieldnames=header, quoting=csv.QUOTE_ALL, lineterminator="\r\n")
     writer.writeheader()
     writer.writerows(new_rows)
     return {
         "total": len(rows),
+        "prod_total": len(existing),
+        "only_prod_keys": sorted(existing - planilla_keys),
         "existing": len(rows) - len(new_rows),
         "new": len(new_rows),
         "items": [
@@ -181,6 +216,12 @@ def prepare_preview(client_id, service):
     result = split_new_accounts(
         service, fetch_cuentas_csv(client_id, service), existing_accounts(client_id, service)
     )
+    only_prod_keys = result.pop("only_prod_keys")
+    invoices = count_invoices(client_id, service, only_prod_keys) if only_prod_keys else {}
+    result["only_prod"] = [
+        {"id_sitio": k[0], "cuenta": k[1], "proveedor": k[2], "facturas": invoices.get(k)}
+        for k in only_prod_keys
+    ]
     temp_dir = tempfile.mkdtemp(prefix="prod_accounts_")
     csv_path = os.path.join(temp_dir, "cuentas.csv")
     with open(csv_path, "wb") as handle:

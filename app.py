@@ -782,8 +782,9 @@ def prod_accounts_preview():
         }
     return jsonify({
         "status": "success", "job_id": job_id, "client_id": client_id, "service": service,
-        "total": preview["total"], "existing": preview["existing"], "new": preview["new"],
-        "items": preview["items"],
+        "total": preview["total"], "prod_total": preview["prod_total"],
+        "existing": preview["existing"], "new": preview["new"],
+        "items": preview["items"], "only_prod": preview["only_prod"],
     })
 
 
