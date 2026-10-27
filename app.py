@@ -719,7 +719,7 @@ def run_errors(flow):
     })
 
 
-# ---- Alta de cuentas nuevas directo en producción, por ahora solo ICBC y Alsea (ver accounts_runner.py) ----
+# ---- Alta de cuentas nuevas directo en producción, por ahora solo ICBC (ver accounts_runner.py) ----
 # Es un añadido: el flujo normal (Validate / Upload) sigue reemplazando las bases como siempre.
 PROD_ACCOUNTS_PREVIEW_TTL_SECONDS = 15 * 60
 prod_account_jobs = {}
