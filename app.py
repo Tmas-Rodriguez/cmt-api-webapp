@@ -128,7 +128,7 @@ CLIENT_SHEETS = {
     # box3 (Alsea) ya no se importa desde Sheets: viaja por otro camino.
     "box4": {"token": "la",      "sheet_id": "1CX4WSq7PR-1a6FWstM-DdnqlKgo1_VNiohoQ8e8AiMI"},  # La Anonima
     "box5": {"token": "mostaza", "sheet_id": "1fpNxj9lToSOfBIrzALtyoIcTXwOvskUoj1h0yK92-0g"},  # Mostaza
-    "box6": {"token": "dia",     "sheet_id": "1zLxmB7vndMRh2P7iJbitpPMkd94ZHtJ6Q-VtytJcAbM"},  # DIA
+    # box6 (DIA) tampoco, desde el 2026-10-28: su planilla vive en Apollo (sheet era 1zLxmB7vndMRh2P7iJbitpPMkd94ZHtJ6Q-VtytJcAbM).
     "box7": {"token": "demo",    "sheet_id": "1bu0LYCkceLbgDEsf6yRyKc18rhfJeZCelexj7gm2AWw"},  # Demo
 }
 
@@ -892,7 +892,7 @@ def stream_prod_accounts():
 
 # Clientes cuya planilla viaja por el data entry en vez de Google Sheets: en lugar de
 # "Importar desde Sheets" tienen "Preparar para validación" (exporta los CSV a providers/).
-PREPARE_VALIDATION_CLIENTS = {"box3": "ALSEA"}  # id de caja -> código de cliente en el data entry
+PREPARE_VALIDATION_CLIENTS = {"box3": "ALSEA", "box6": "DIA"}  # id de caja -> código de cliente en el data entry
 # Clientes cuya planilla todavía vive fuera de Apollo: cada Upload exitoso la recarga también ahí.
 APOLLO_RELOAD_CLIENTS = {"box1": "SAN", "box2": "GP", "box4": "LA"}
 

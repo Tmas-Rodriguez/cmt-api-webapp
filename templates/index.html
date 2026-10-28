@@ -124,7 +124,7 @@
         // Clientes que ya no se importan desde Google Sheets: su planilla viaja por el data
         // entry, así que en lugar de "Importar desde Sheets" tienen "Preparar para validación".
         // (El color de marca de cada cliente viene del servidor: client.color -> --brand.)
-        const SHEETS_IMPORT_DISABLED = new Set(["box3"]); // Alsea
+        const SHEETS_IMPORT_DISABLED = new Set(["box3", "box6"]); // Alsea, DIA (su planilla vive en Apollo)
 
         function updateSheetsButton() {
             const prepareOnly = SHEETS_IMPORT_DISABLED.has(selectedId);
