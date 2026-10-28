@@ -484,9 +484,30 @@ def stream_gera():
     user = current_user.name
 
     def event_stream():
+        key = client_token or ""
+        with _gera_runs_guard:
+            since = _gera_runs.get(key)
+            if since is None:
+                _gera_runs[key] = time.time()
+        if since is not None:
+            # the same user may re-acquire the client lock, so a retry after a dropped connection
+            # would start a second run over the same folder while the first is still going
+            yield (f"data: ❌ Ya hay una validación de este cliente corriendo (empezó a las "
+                   f"{datetime.fromtimestamp(since):%H:%M}). Esperá a que termine y volvé a validar.\n\n")
+            yield "data: {'status': 'error', 'message': 'Ya hay una validación en curso'}\n\n"
+            return
+
+        def done():
+            with _gera_runs_guard:
+                _gera_runs.pop(key, None)
+            if client_id:
+                locks.release(client_id, user)
+
         try:
-            for line in run_gera(client_token):
-                if line.startswith("__GERA_METRICS__:"):
+            for line in _pump(run_gera(client_token), done):
+                if line is None:
+                    yield ": keep-alive\n\n"
+                elif line.startswith("__GERA_METRICS__:"):
                     metrics_json = line.split(":", 1)[1].strip()
                     yield f"data: __GERA_METRICS__:{metrics_json}\n\n"
                 elif line.startswith("__GERA_COMPLETED__:"):
@@ -513,10 +534,43 @@ def stream_gera():
         except Exception as e:
             print(f"DEBUG: Stream error: {str(e)}", flush=True)
             yield f"data: {{'status': 'error', 'message': 'Stream error: {str(e)}'}}\n\n"
-        finally:
-            if client_id:
-                locks.release(client_id, user)
     return Response(event_stream(), mimetype="text/event-stream")
+
+
+_gera_runs = {}                     # client token -> start time of the validation still running
+_gera_runs_guard = threading.Lock()
+
+
+def _pump(gen, on_done, every=15):
+    """Run `gen` to the end in its own thread and yield its items, or None after `every` seconds
+    of silence so the stream can send a keep-alive (the tunnel drops a quiet connection: splitting
+    a big .xlsx takes minutes without a line). A closed tab no longer stops the run halfway;
+    `on_done` runs when it really ends."""
+    q = queue.Queue()
+    end = object()
+
+    def run():
+        try:
+            for item in gen:
+                q.put(item)
+        except Exception as e:
+            q.put(e)
+        finally:
+            q.put(end)
+            on_done()
+
+    threading.Thread(target=run, daemon=True).start()
+    while True:
+        try:
+            item = q.get(timeout=every)
+        except queue.Empty:
+            yield None
+            continue
+        if item is end:
+            return
+        if isinstance(item, Exception):
+            raise item
+        yield item
 
 @app.route("/stream-refresh")
 @login_required

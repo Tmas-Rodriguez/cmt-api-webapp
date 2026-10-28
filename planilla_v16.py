@@ -213,17 +213,36 @@ def latest_folder(client_dir: Path):
 
 def _split_xlsx(folder: Path, esg_repository: Path):
     """An import from Sheets brings only the .xlsx: split it into CSVs with gera's own
-    excel_to_csv (gera then sees the CSVs and doesn't split it again)."""
-    code = ("import sys, gera\n"
-            "from pathlib import Path\n"
-            "for x in sorted(Path(sys.argv[1]).glob('*.xlsx')):\n"
-            "    gera.excel_to_csv(str(x))\n")
-    env = os.environ.copy()
-    env["PYTHONIOENCODING"] = "utf-8"
-    r = subprocess.run(["python", "-c", code, str(folder)], cwd=str(esg_repository), capture_output=True,
-                       text=True, encoding="utf-8", env=env)
-    if r.returncode != 0:
-        raise RuntimeError(f"No se pudo pasar el .xlsx a CSV: {(r.stderr or r.stdout).strip()[-500:]}")
+    excel_to_csv (gera then sees the CSVs and doesn't split it again). Yields excel_to_csv's
+    lines as it goes (a big planilla takes minutes). The split runs in a scratch folder next to
+    it and the CSVs move in only at the end, so the folder is never seen half split."""
+    scratch = folder.parent / f".{folder.name}.split_tmp"
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir()
+    try:
+        for x in sorted(folder.glob("*.xlsx")):
+            shutil.copy2(x, scratch / x.name)
+        code = ("import sys, gera\n"
+                "from pathlib import Path\n"
+                "for x in sorted(Path(sys.argv[1]).glob('*.xlsx')):\n"
+                "    gera.excel_to_csv(str(x))\n")
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        proc = subprocess.Popen(["python", "-u", "-c", code, str(scratch)], cwd=str(esg_repository),
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace", env=env)
+        tail = []
+        for line in proc.stdout:
+            line = line.rstrip()
+            tail = (tail + [line])[-10:]
+            if line.startswith("Solapa "):          # "Solapa 'datos_e' exportada a '<path>'"
+                yield "   " + line.split(" a '")[0]
+        if proc.wait() != 0:
+            raise RuntimeError("No se pudo pasar el .xlsx a CSV: " + " | ".join(tail)[-500:])
+        for csv_file in scratch.glob("*.csv"):
+            os.replace(csv_file, folder / csv_file.name)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
@@ -239,8 +258,8 @@ def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
         return
     files = [f for f in folder.iterdir() if f.is_file()]
     if files and all(f.suffix.lower() == ".xlsx" for f in files):
-        yield f"📄 {folder.name}: solo trae el .xlsx, lo paso a CSV..."
-        _split_xlsx(folder, esg_repository)
+        yield f"📄 {folder.name}: solo trae el .xlsx, lo paso a CSV (con una planilla grande tarda unos minutos)..."
+        yield from _split_xlsx(folder, esg_repository)
     if not is_v15_set(folder):
         yield f"✅ {folder.name} ya está en v1.6 (o no tiene datos_e en v1.5): se valida tal cual"
         return
