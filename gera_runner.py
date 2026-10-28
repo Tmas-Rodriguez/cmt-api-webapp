@@ -5,6 +5,8 @@ import json
 import time
 from pathlib import Path
 
+from planilla_v16 import prepare_latest
+
 # Path to store output folder info
 GERA_OUTPUT_FOLDER = "C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API\\errors"  # Update this to match your output folder
 ESG_REPOSITORY = Path(r"C:\Users\cmt\Documents\Repsitories\EsgCmt-API")
@@ -64,6 +66,15 @@ def _diff_metrics(current, production):
 def run_gera(client_token=None):
     # Record the start time before running the script
     start_time = time.time()
+
+    # every client but ICBC validates on v1.6: a v1.5 set (or an .xlsx import) is converted first
+    try:
+        for line in prepare_latest(client_token, PROVIDERS_DIR, ESG_REPOSITORY):
+            yield line
+    except Exception as e:
+        yield f"❌ No se pudo convertir la carpeta a v1.6: {e}"
+        yield f"__GERA_ERROR__:{GERA_OUTPUT_FOLDER}|{start_time}|conversion v1.6"
+        return
 
     command = ["python", "-u", "gera.py"]
     if client_token:
