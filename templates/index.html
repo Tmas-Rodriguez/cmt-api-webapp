@@ -449,7 +449,9 @@
                     { label: "Buscando la carpeta más reciente", match: ["Buscando la carpeta más reciente", "Carpeta más reciente encontrada"] },
                     { label: "Configurando entorno (.env.script)", match: ["Creando archivo .env.script", "Archivo .env.script actualizado", "Bucket configurado"] },
                     { label: "Exportando datos", match: ["Exportación completada"] },
-                    { label: "Ejecutando comandos de subida", match: ["🔧 Ejecutando:", "Ejecutando:"] }
+                    { label: "Ejecutando comandos de subida", match: ["🔧 Ejecutando:", "Ejecutando:"] },
+                    // solo Santander, GP y La Anónima: su planilla se recarga también en Apollo
+                    { label: "Actualizando Apollo", match: ["🏛️ Apollo:"] }
                 ],
                 success: ["¡Proceso completado exitosamente!"],
                 error: ["❌ Error", "No se encontró el comando", "hubo errores en la ejecución"]

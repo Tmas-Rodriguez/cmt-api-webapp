@@ -597,13 +597,14 @@ def stream_upload():
     client_id = company["id"] if company else None
     user = current_user.name
 
+    def done():
+        if client_id:
+            locks.release(client_id, user)
+
     def event_stream():
-        try:
-            for line in run_upload(client_token):
-                yield f"data: {line}\n\n"
-        finally:
-            if client_id:
-                locks.release(client_id, user)
+        # the upload (and Apollo's reload after it) goes on to the end even if the tab disconnects
+        for line in _pump(run_upload(client_token, APOLLO_RELOAD_CLIENTS.get(client_id)), done):
+            yield ": keep-alive\n\n" if line is None else f"data: {line}\n\n"
     return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route("/download-gera-files")
@@ -892,6 +893,8 @@ def stream_prod_accounts():
 # Clientes cuya planilla viaja por el data entry en vez de Google Sheets: en lugar de
 # "Importar desde Sheets" tienen "Preparar para validación" (exporta los CSV a providers/).
 PREPARE_VALIDATION_CLIENTS = {"box3": "ALSEA"}  # id de caja -> código de cliente en el data entry
+# Clientes cuya planilla todavía vive fuera de Apollo: cada Upload exitoso la recarga también ahí.
+APOLLO_RELOAD_CLIENTS = {"box1": "SAN", "box2": "GP", "box4": "LA"}
 
 
 @app.route("/prepare-validation", methods=["POST"])

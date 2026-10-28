@@ -5,6 +5,7 @@ firmado con CMT_SSO_SECRET (mismo valor en ambos .env), con salt "cmt-export", u
 (`scope`) y 60 segundos de vida.
 """
 
+import json
 import os
 import urllib.error
 import urllib.request
@@ -33,6 +34,12 @@ def request(path, scope, method="GET", timeout=30):
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as error:
+        try:   # our own refusals carry {"message": ...}
+            message = json.loads(error.read() or b"{}").get("message")
+        except (ValueError, AttributeError, OSError):
+            message = None
+        if message and error.code in (400, 409):
+            raise RuntimeError(message) from error
         hint = " (¿el data entry tiene la versión con las rutas internas? Hay que reconstruirlo.)" if error.code in (403, 404) else ""
         raise RuntimeError(f"El data entry respondió {error.code}{hint}") from error
     except (urllib.error.URLError, OSError) as error:
