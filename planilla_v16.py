@@ -6,15 +6,20 @@ place: the original goes to providers/<cliente>/old/<carpeta>_v15_original/ and 
 set takes its name. A folder with only the .xlsx (an import from Sheets) is first split into
 CSVs with gera's own excel_to_csv, as gera would do. Folders already in v1.6 are left alone.
 
-Rules (agreed for Alsea on 2026-10-27, impuestos_tasas -> otros on 2026-10-28); the standalone
-copy on the Desktop (convertir_planilla_v15_a_v16.py) follows the same ones:
+Rules (agreed for Alsea on 2026-10-27, impuestos_tasas -> otros on 2026-10-28, hybrid sets on
+2026-11-03); the standalone copy on the Desktop (convertir_planilla_v15_a_v16.py) follows the same ones:
+- A set needs converting when its datos_e is v1.5 (impuestos_tasas) or a hybrid that isn't v1.6 yet
+  (no otros / total_a_pagar, e.g. Mostaza's Sheet: `impuestos` plus recargo_* columns).
 - datos_e: impuestos_tasas -> otros (cargos_impositivos stays empty). datos_a / datos_g keep it.
+  The datos_e concepts CMT v1.6 reads but leaves out of the costo bruto ("colgados": impuestos,
+  costo_total_consumo) are added to otros too.
 - Columns in EsgCmt-API's v1.6 parser order; the v1.6 columns v1.5 lacks go empty.
 - datos_opah penalties -> their invoice's column (full key, else the period when a single
   invoice has it): 1 -> datos_e.recargo_exceso_potencia, 2 -> datos_e.recargo_reactiva,
   3 -> datos_e.recargo_mora, 4 -> datos_g.recargo_mora, 5 (water mora) -> added to datos_a.otros.
   Several on one invoice are summed. The reactive penalty's cos φ -> datos_e.cosfi; kW
-  excedidos have no v1.6 column and are dropped.
+  excedidos have no v1.6 column and are dropped. When the set already has that recargo_* column
+  filled (hybrid), datos_opah is a copy of it: nothing is added, the amounts are only compared.
 - saldo_anterior always empty (carried-over balances: CMT v1.6 would add them to the bruto).
 - datos_opah.csv / opah.csv empty files, as EsgCmt-API's v1.6 exports. Other tables as they are.
 - UTF-8 without BOM, every field quoted, CRLF (also after the last line).
@@ -53,6 +58,8 @@ PENALTY_TARGET = {
     5: ("datos_a", "otros"),
 }
 PENALTY_NAME = {1: "exceso de potencia", 2: "reactiva", 3: "mora luz", 4: "mora gas", 5: "mora agua"}
+# datos_e columns CMT v1.6 reads but doesn't add to the costo bruto: their amounts go to otros
+HANGING_E = ["impuestos_tasas", "impuestos", "costo_total_consumo"]
 FOLDER_RE = re.compile(r"csv_([a-zA-Z]+)_(\d{8})$")   # the same pattern gera.py looks for
 
 
@@ -90,7 +97,9 @@ def is_v15_set(folder: Path) -> bool:
     if not e.exists():
         return False
     header, _ = read_csv(e)
-    return "impuestos_tasas" in header and "cargos_impositivos" not in header
+    if "impuestos_tasas" in header and "cargos_impositivos" not in header:
+        return True                                                    # v1.5
+    return "otros" not in header and "total_a_pagar" not in header     # hybrid, not v1.6 yet
 
 
 def convert(src: Path, dst: Path) -> list:
@@ -110,6 +119,10 @@ def convert(src: Path, dst: Path) -> list:
             by_period.setdefault((t, tuple(r.get(c, "").strip() for c in PERIOD)), []).append(i)
 
     adds, cosfi, moved, lost, kw_lost = {}, {}, {}, [], 0
+    # recargo_* columns the set already fills: datos_opah repeats them, so it's compared, not added
+    present = {(t, c) for t, c in PENALTY_TARGET.values() if c.startswith("recargo_") and t in tables
+               and any((r.get(c) or "").strip() for r in tables[t])}
+    already, same, differ = {}, 0, []
     opah = src / "datos_opah.csv"
     if opah.exists():
         _, penalties = read_csv(opah)
@@ -134,9 +147,10 @@ def convert(src: Path, dst: Path) -> list:
                             + f", monto={p.get('monto', '')}")
                 continue
             row = hits[0]
-            per_row = adds.setdefault((table, row), {})
+            per_row = (already if (table, col) in present else adds).setdefault((table, row), {})
             per_row[col] = per_row.get(col, 0.0) + num(p.get("monto", ""))
-            moved[m] = moved.get(m, 0) + 1
+            if (table, col) not in present:
+                moved[m] = moved.get(m, 0) + 1
             adic = (p.get("dato_adic") or "").strip()
             if m == 2 and adic:
                 cur = cosfi.get(row)
@@ -144,18 +158,27 @@ def convert(src: Path, dst: Path) -> list:
             if m == 1 and adic:
                 kw_lost += 1
 
-    saldos = taxes = 0
+    for (t, i), cols in already.items():
+        for col, v in cols.items():
+            if abs(num(tables[t][i].get(col, "")) - v) < 0.005:
+                same += 1
+            else:
+                differ.append(f"{t} fila {i + 2}: {col} = {tables[t][i].get(col, '')!r}, datos_opah suma {fmt(v)}")
+
+    saldos, taxes = 0, {}
     for t, rows in tables.items():
         cols = ["otros" if (t == "datos_e" and c == "impuestos_tasas") else c for c in headers[t]]
         header = V16_HEADERS[t] + [c for c in cols if c not in V16_HEADERS[t]]
         out = []
         for i, r in enumerate(rows):
             n = dict(r)
-            if t == "datos_e" and "impuestos_tasas" in n:
-                tax = n.pop("impuestos_tasas")
-                if tax.strip():
-                    taxes += 1
-                    n["otros"] = fmt(num(n["otros"]) + num(tax)) if n.get("otros", "").strip() else tax
+            for c in (HANGING_E if t == "datos_e" else []):
+                tax = (n.pop(c, "") if c == "impuestos_tasas" else n.get(c, "")) or ""
+                if c != "impuestos_tasas":
+                    n[c] = ""
+                if tax.strip() and num(tax):
+                    taxes[c] = taxes.get(c, 0) + 1
+                    n["otros"] = fmt(num(n.get("otros", "")) + num(tax)) if n.get("otros", "").strip() else tax
             if n.get("saldo_anterior", "").strip():
                 saldos += 1
             n["saldo_anterior"] = ""
@@ -178,7 +201,13 @@ def convert(src: Path, dst: Path) -> list:
         shutil.copyfile(f, dst / f.name)
         copied += 1
     log.append(f"datos_opah.csv y opah.csv: vacíos (v1.6). Otros {copied} archivos copiados sin cambios.")
-    log.append(f"impuestos_tasas de electricidad -> datos_e.otros: {taxes}")
+    log.append("Conceptos de electricidad sumados a datos_e.otros: "
+               + (", ".join(f"{c} {n}" for c, n in taxes.items()) or "ninguno"))
+    if present:
+        log.append(f"Multas que ya estaban en su factura (recargo_*): datos_opah se comparó, no se sumó — "
+                   f"{same} coinciden, {len(differ)} distintas")
+        for d in differ[:20]:
+            log.append("  DISTINTA: " + d)
     log.append("Multas pasadas a su factura:")
     for m in sorted(PENALTY_TARGET):
         t, c = PENALTY_TARGET[m]
@@ -264,7 +293,7 @@ def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
         yield f"✅ {folder.name} ya está en v1.6 (o no tiene datos_e en v1.5): se valida tal cual"
         return
 
-    yield f"🔄 {folder.name} está en v1.5: la convierto a v1.6..."
+    yield f"🔄 {folder.name} todavía no está en v1.6: la convierto..."
     tmp = client_dir / f".{folder.name}.v16_tmp"
     shutil.rmtree(tmp, ignore_errors=True)
     try:
