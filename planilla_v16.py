@@ -274,6 +274,38 @@ def _split_xlsx(folder: Path, esg_repository: Path):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+# Clients whose planilla still comes from Google Sheets but who also load invoices in Apollo: before
+# converting, Apollo adds its own invoices the Sheet doesn't have (the Sheet wins any conflict).
+APOLLO_MERGE = {"santander": "SAN", "gp": "GP", "laanonima": "LA"}
+
+
+def _merge_apollo(code: str, folder: Path):
+    """Ask Apollo to add to this v1.5 set the invoices loaded there and missing from the Sheet.
+    Raises (and nothing is validated) if it can't: CMT would get the Sheet without them."""
+    import json
+    from urllib.parse import quote
+    import dentry_client
+    yield "🏛️ Sumando las facturas cargadas en Apollo que la Sheet no tiene..."
+    try:
+        r = json.loads(dentry_client.request(f"/internal/cmt/merge_apollo/{code}?folder={quote(folder.name)}",
+                                             scope="merge", method="POST", timeout=300))
+    except (RuntimeError, ValueError) as e:
+        raise RuntimeError(f"Apollo no pudo sumar sus facturas: {e}") from e
+    if r.get("already"):
+        yield "   (ya se habían sumado antes en esta carpeta)"
+    added = r.get("added") or {}
+    yield (f"   Agregadas: {', '.join(f'{t} {n}' for t, n in added.items())}" if added
+           else "   Apollo no tiene facturas que falten en la Sheet")
+    if r.get("penalties"):
+        yield f"   Multas de esas facturas: {r['penalties']}"
+    for kind, title in (("conflicts", "Ya estaban en la Sheet con otros valores (queda la Sheet)"),
+                        ("skipped", "No se agregaron"), ("dropped_columns", "Datos sin columna en la Sheet")):
+        if r.get(kind):
+            yield f"   ⚠️ {title}: {len(r[kind])}"
+            for line in r[kind][:15]:
+                yield "      " + line
+
+
 def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
     """Yield log lines; leaves the client's newest folder in v1.6 (raises on failure, with the
     original folder untouched)."""
@@ -293,6 +325,8 @@ def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
         yield f"✅ {folder.name} ya está en v1.6 (o no tiene datos_e en v1.5): se valida tal cual"
         return
 
+    if client_token in APOLLO_MERGE:   # the invoices loaded in Apollo that the Sheet doesn't have
+        yield from _merge_apollo(APOLLO_MERGE[client_token], folder)
     yield f"🔄 {folder.name} todavía no está en v1.6: la convierto..."
     tmp = client_dir / f".{folder.name}.v16_tmp"
     shutil.rmtree(tmp, ignore_errors=True)
