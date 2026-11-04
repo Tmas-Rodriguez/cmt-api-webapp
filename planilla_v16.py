@@ -352,7 +352,13 @@ def merge_report_lines(report: dict):
                 yield "      " + (item if isinstance(item, str) else item.get("factura", str(item)))
 
 
-def _merge_apollo(code: str, folder: Path):
+def merge_report_event(report: dict) -> str:
+    """The stream line the page turns into the "Facturas desde Apollo" section."""
+    import json
+    return "__MERGE_REPORT__:" + json.dumps(report, ensure_ascii=False)
+
+
+def _merge_apollo(code: str, folder: Path, user: str = ""):
     """Add to this v1.6 set the invoices loaded in Apollo and missing from the Sheet. Raises
     MergeDecisionNeeded when something has to be decided, RuntimeError when Apollo can't answer
     (nothing is validated: CMT would get the Sheet without them)."""
@@ -363,19 +369,21 @@ def _merge_apollo(code: str, folder: Path):
     if r.get("already"):
         yield "   Ya se había hecho el merge en esta carpeta:"
         yield from merge_report_lines(r.get("report") or {})
+        yield merge_report_event(r.get("report") or {})
         return
     if r.get("issues"):
         raise MergeDecisionNeeded({"code": code, "folder": folder.name, "analysis": r})
-    res = apollo_merge_call(code, folder.name, "apply", {"decisions": {}, "usuario": ""})
+    res = apollo_merge_call(code, folder.name, "apply", {"decisions": {}, "usuario": user or ""})
     if res.get("status") == "needs_decision":
         raise MergeDecisionNeeded({"code": code, "folder": folder.name, "analysis": res.get("analysis"),
                                    "message": res.get("message")})
     if res.get("status") != "ok":
         raise RuntimeError(res.get("message") or "Apollo no pudo sumar sus facturas")
     yield from merge_report_lines(res.get("report") or {})
+    yield merge_report_event(res.get("report") or {})
 
 
-def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
+def prepare_latest(client_token, providers_dir: Path, esg_repository: Path, user: str = ""):
     """Yield log lines; leaves the client's newest folder in v1.6 (raises on failure, with the
     original folder untouched)."""
     if not client_token or client_token in SKIP_TOKENS:
@@ -396,7 +404,7 @@ def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
     else:
         yield from _convert_in_place(folder, client_dir)
     if client_token in APOLLO_MERGE:   # the invoices loaded in Apollo that the Sheet doesn't have
-        yield from _merge_apollo(APOLLO_MERGE[client_token], folder)
+        yield from _merge_apollo(APOLLO_MERGE[client_token], folder, user)
 
 
 def _convert_in_place(folder: Path, client_dir: Path):

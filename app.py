@@ -504,7 +504,7 @@ def stream_gera():
                 locks.release(client_id, user)
 
         try:
-            for line in _pump(run_gera(client_token), done):
+            for line in _pump(run_gera(client_token, user), done):
                 if line is None:
                     yield ": keep-alive\n\n"
                 elif line.startswith("__GERA_METRICS__:"):
@@ -588,6 +588,26 @@ def stream_refresh():
         finally:
             locks.release(client, user)
     return Response(event_stream(client, user), mimetype="text/event-stream")
+
+@app.route("/merge-apollo/report")
+@login_required
+def merge_apollo_report():
+    """What Validar's merge with Apollo did in the client's newest set (its .apollo_merge.json)."""
+    import planilla_v16
+    from gera_runner import PROVIDERS_DIR
+    company = resolve_company(request.args.get("selectedId"))
+    if not company or company["token"] not in planilla_v16.APOLLO_MERGE:
+        return jsonify({"status": "ok", "report": None})
+    client_dir = PROVIDERS_DIR / company["token"]
+    folder = planilla_v16.latest_folder(client_dir) if client_dir.is_dir() else None
+    marker = folder / ".apollo_merge.json" if folder else None
+    if not marker or not marker.is_file():
+        return jsonify({"status": "ok", "report": None})
+    try:
+        return jsonify({"status": "ok", "report": json.loads(marker.read_text(encoding="utf-8"))})
+    except (OSError, ValueError):
+        return jsonify({"status": "ok", "report": None})
+
 
 @app.route("/merge-apollo/apply", methods=["POST"])
 @login_required

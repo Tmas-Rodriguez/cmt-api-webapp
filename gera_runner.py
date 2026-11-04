@@ -63,13 +63,13 @@ def _diff_metrics(current, production):
     return diff
 
 
-def run_gera(client_token=None):
+def run_gera(client_token=None, user=""):
     # Record the start time before running the script
     start_time = time.time()
 
     # every client but ICBC validates on v1.6: a v1.5 set (or an .xlsx import) is converted first
     try:
-        for line in prepare_latest(client_token, PROVIDERS_DIR, ESG_REPOSITORY):
+        for line in prepare_latest(client_token, PROVIDERS_DIR, ESG_REPOSITORY, user):
             yield line
     except MergeDecisionNeeded as e:
         n = (e.payload.get("analysis") or {}).get("issues", 0)

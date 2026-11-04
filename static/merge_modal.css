@@ -60,3 +60,16 @@
                  background: #fff; width: 100%; box-sizing: border-box; }
 .mm-grid input.changed { border-color: var(--warn, #b45309); background: var(--warn-soft, #fef3c7); }
 .mm-grid input.differs { box-shadow: inset 3px 0 0 #6366f1; }
+
+/* "Facturas desde Apollo" (after Validar) */
+.mr-summary { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 10px; }
+.mr-meta { margin-left: auto; font-size: 0.75rem; color: var(--muted-2, #64748b); }
+.mr-chip { display: inline-block; font-size: 0.72rem; font-weight: 600; border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+.mr-chip.ok { background: var(--ok-soft, #dcfce7); color: var(--ok, #15803d); }
+.mr-chip.warn { background: var(--warn-soft, #fef3c7); color: #92400e; }
+.mr-chip.off { background: #ffe4e6; color: #9f1239; }
+.mr-chip.same { background: var(--line-soft, #f1f5f9); color: var(--ink-2, #334155); }
+.mr-table td { vertical-align: top; font-size: 0.78rem; }
+.mr-table td.mr-obs { color: var(--ink-2, #334155); max-width: 340px; }
+.mr-table th, .mr-table td { text-align: left !important; }
+.mr-table th.num, .mr-table td.num { text-align: right !important; font-variant-numeric: tabular-nums; }

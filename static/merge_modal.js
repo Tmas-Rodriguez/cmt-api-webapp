@@ -205,7 +205,43 @@
         render();
     }
 
+    // "Facturas desde Apollo": what the merge did with each invoice Apollo has and the Sheet lacked
+    const ESTADO_CLASS = { add: "ok", in_sheet: "same", edit_apollo_same: "same", add_warn: "warn",
+                           edit_csv: "warn", edit_apollo: "warn", skip: "off" };
+
+    function renderReport(container, report) {
+        if (!container) return;
+        const inv = report.invoices || [];
+        const n = k => inv.filter(i => i.estado === k).length;
+        const added = Object.values(report.added || {}).reduce((a, b) => a + b, 0);
+        container.hidden = false;
+        container.innerHTML = `
+          <div class="err-reports-head"><span class="err-reports-title">Facturas desde Apollo</span></div>
+          <div class="mr-summary">
+            <span class="mr-chip ok">${added} agregada(s)</span>
+            ${n("add_warn") ? `<span class="mr-chip warn">${n("add_warn")} con observaciones</span>` : ""}
+            ${n("edit_csv") ? `<span class="mr-chip warn">${n("edit_csv")} línea(s) de la Sheet corregidas</span>` : ""}
+            ${n("edit_apollo") + n("edit_apollo_same") ? `<span class="mr-chip warn">${n("edit_apollo") + n("edit_apollo_same")} corregida(s) en Apollo</span>` : ""}
+            ${n("skip") ? `<span class="mr-chip off">${n("skip")} quitada(s)</span>` : ""}
+            ${n("in_sheet") ? `<span class="mr-chip same">${n("in_sheet")} ya estaban en la Sheet</span>` : ""}
+            <span class="mr-meta">${esc(report.folder || "")}${report.usuario ? " · " + esc(report.usuario) : ""}${report.merged_at ? " · " + esc(report.merged_at.replace("T", " ")) : ""}</span>
+          </div>
+          ${inv.length ? `<table class="metrics-diff-table mr-table"><thead><tr>
+              <th>Estado</th><th>Servicio</th><th>Distribuidora</th><th>Cuenta</th><th>Sitio</th><th>Período</th><th>N° factura</th>
+              <th class="num">Consumo</th><th class="num">Costo neto</th><th>Observaciones</th></tr></thead><tbody>
+            ${inv.map(i => `<tr>
+              <td><span class="mr-chip ${ESTADO_CLASS[i.estado] || "same"}">${esc(i.estado_texto)}</span></td>
+              <td>${esc(i.servicio)}</td><td>${esc(i.proveedor)}</td><td>${esc(i.cuenta)}</td><td>${esc(i.id_sitio)}</td>
+              <td>${esc(i.fecha_anterior)} → ${esc(i.fecha_actual)}</td><td>${esc(i.num_factura)}</td>
+              <td class="num">${esc(i.consumo)}</td><td class="num">${esc(i.costo_neto)}</td>
+              <td class="mr-obs">${(i.observaciones || []).map(esc).join("<br>") || (i.estado === "add" ? "Sin observaciones" : "")}${
+                  i.cambios_sheet ? `<br>Línea ${i.linea_sheet}: ${Object.entries(i.cambios_sheet).map(([c, [a, b]]) => `${esc(c)} ${esc(a) || "—"} → ${esc(b) || "—"}`).join(", ")}` : ""}</td>
+            </tr>`).join("")}</tbody></table>`
+            : `<div class="err-reports-empty">${added ? "Detalle por factura no disponible para este merge." : "Apollo no tiene facturas que falten en la Sheet."}</div>`}`;
+    }
+
     window.MergeModal = {
+        renderReport,
         open(payload, opts) {
             build();
             state = { folder: payload.folder, opts: opts || {} };

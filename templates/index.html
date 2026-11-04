@@ -6,8 +6,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.3') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='merge_modal.css', v='1') }}">
-    <script src="{{ url_for('static', filename='merge_modal.js', v='1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='merge_modal.css', v='3') }}">
+    <script src="{{ url_for('static', filename='merge_modal.js', v='3') }}"></script>
     <style>
         .forbidden {
             pointer-events: none;
@@ -86,6 +86,7 @@
 
     <div id="validatePanel" class="process-panel" data-state="idle" hidden></div>
     <div id="validationMetrics" class="err-reports" hidden></div>
+    <div id="apolloMerge" class="err-reports" hidden></div>
     <div id="validateErrors" class="err-reports" hidden></div>
 
     <h2>Alta de cuentas en producción</h2>
@@ -150,9 +151,22 @@
             selectedId = id;
             updateSheetsButton();
             syncAccountsClient();
+            loadApolloMergeReport(id);
 
             // Save to localStorage
             localStorage.setItem("clientId", id);
+        }
+
+        // "Facturas desde Apollo" del último set del cliente (SAN, GP, LA): lo que hizo el merge al validar
+        async function loadApolloMergeReport(id) {
+            const el = document.getElementById("apolloMerge");
+            if (!el) return;
+            el.hidden = true; el.textContent = "";
+            try {
+                const res = await fetch("/merge-apollo/report?selectedId=" + encodeURIComponent(id));
+                const d = await res.json();
+                if (selectedId === id && d.status === "ok" && d.report) MergeModal.renderReport(el, d.report);
+            } catch (e) { /* sin reporte */ }
         }
 
         // ===== Lock por cliente en tiempo real (ver locks.py) =====
@@ -485,6 +499,7 @@
             resetDownstreamButtons();
             resetErrorReports("validateErrors");
             resetErrorReports("validationMetrics");
+            resetErrorReports("apolloMerge");
             validateTracker = new ProcessTracker(document.getElementById("validatePanel"), {
                 ...FLOWS.gera,
                 onSuccess: enableDownstreamButtons
@@ -507,6 +522,14 @@
                         renderMetricsDiff(JSON.parse(data.slice("__GERA_METRICS__:".length)));
                     } catch (e) {
                         console.error("No se pudo interpretar __GERA_METRICS__", e);
+                    }
+                    return;
+                }
+                if (data.startsWith("__MERGE_REPORT__:")) {
+                    try {
+                        MergeModal.renderReport(document.getElementById("apolloMerge"), JSON.parse(data.slice("__MERGE_REPORT__:".length)));
+                    } catch (e) {
+                        console.error("No se pudo interpretar __MERGE_REPORT__", e);
                     }
                     return;
                 }
