@@ -6,6 +6,8 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='3.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='theme.css', v='3.3') }}">
     <link rel="icon" type="image/png" href="{{ url_for('static', filename='favicon default.png') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='merge_modal.css', v='1') }}">
+    <script src="{{ url_for('static', filename='merge_modal.js', v='1') }}"></script>
     <style>
         .forbidden {
             pointer-events: none;
@@ -506,6 +508,29 @@
                     } catch (e) {
                         console.error("No se pudo interpretar __GERA_METRICS__", e);
                     }
+                    return;
+                }
+                if (data.startsWith("__MERGE_DECISION__:")) {
+                    // Apollo's merge found invoices to decide about: the run stopped here; once the
+                    // popup's decisions are applied, Validar starts again (the merge is then done)
+                    eventSource.close();
+                    let payload = null;
+                    try { payload = JSON.parse(data.slice("__MERGE_DECISION__:".length)); } catch (e) { console.error(e); }
+                    if (!payload) { tracker.fail("No se pudo leer lo que Apollo pidió revisar."); return; }
+                    tracker.note("Esperando tus decisiones sobre las facturas de Apollo…");
+                    const box = selectedId;
+                    MergeModal.open(payload, {
+                        selectedId: box,
+                        onApplied(lines) {
+                            tracker.note("✓ Merge con Apollo aplicado:");
+                            lines.forEach(l => tracker.note(l));
+                            tracker.note("Vuelvo a validar…");
+                            if (selectedId === box) startGeraStream();
+                        },
+                        onCancel() {
+                            tracker.fail("Validación frenada: quedan facturas de Apollo sin decidir. Volvé a validar cuando quieras.");
+                        },
+                    });
                     return;
                 }
                 tracker.pushLine(data);

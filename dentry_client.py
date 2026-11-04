@@ -14,8 +14,9 @@ DATA_ENTRY_URL = os.environ.get("DATA_ENTRY_INTERNAL_URL", "http://127.0.0.1:550
 EXPORT_SALT = "cmt-export"
 
 
-def request(path, scope, method="GET", timeout=30):
-    """Bytes de la respuesta de `path` en el data entry. Lanza RuntimeError con un mensaje legible."""
+def request(path, scope, method="GET", timeout=30, body=None):
+    """Bytes de la respuesta de `path` en el data entry (con `body`, se manda como JSON).
+    Lanza RuntimeError con un mensaje legible."""
     from itsdangerous import URLSafeTimedSerializer
 
     import dentry_auth
@@ -24,12 +25,12 @@ def request(path, scope, method="GET", timeout=30):
     if not secret:
         raise RuntimeError(f"Falta {dentry_auth.SSO_ENV_KEY} en el .env de la webapp.")
     token = URLSafeTimedSerializer(secret, salt=EXPORT_SALT).dumps({"scope": scope})
-    req = urllib.request.Request(
-        f"{DATA_ENTRY_URL}{path}",
-        method=method,
-        data=b"" if method == "POST" else None,
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    headers = {"Authorization": f"Bearer {token}"}
+    data = b"" if method == "POST" else None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{DATA_ENTRY_URL}{path}", method=method, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             return response.read()

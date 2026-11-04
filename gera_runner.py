@@ -5,7 +5,7 @@ import json
 import time
 from pathlib import Path
 
-from planilla_v16 import prepare_latest
+from planilla_v16 import MergeDecisionNeeded, prepare_latest
 
 # Path to store output folder info
 GERA_OUTPUT_FOLDER = "C:\\Users\\cmt\\Documents\\Repsitories\\EsgCmt-API\\errors"  # Update this to match your output folder
@@ -71,6 +71,12 @@ def run_gera(client_token=None):
     try:
         for line in prepare_latest(client_token, PROVIDERS_DIR, ESG_REPOSITORY):
             yield line
+    except MergeDecisionNeeded as e:
+        n = (e.payload.get("analysis") or {}).get("issues", 0)
+        yield (f"✋ Apollo tiene {n} factura(s) que hay que revisar antes de sumarlas a la Sheet. "
+               "Decidí qué hacer con cada una y la validación sigue sola.")
+        yield "__MERGE_DECISION__:" + json.dumps(e.payload, ensure_ascii=False)
+        return
     except Exception as e:
         yield f"❌ No se pudo convertir la carpeta a v1.6: {e}"
         yield f"__GERA_ERROR__:{GERA_OUTPUT_FOLDER}|{start_time}|conversion v1.6"

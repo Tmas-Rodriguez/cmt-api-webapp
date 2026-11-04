@@ -589,6 +589,28 @@ def stream_refresh():
             locks.release(client, user)
     return Response(event_stream(client, user), mimetype="text/event-stream")
 
+@app.route("/merge-apollo/apply", methods=["POST"])
+@login_required
+def merge_apollo_apply():
+    """The merge popup's decisions (Validar of SAN / GP / LA): Apollo applies them to the set
+    (planilla_v16 / Apollo's libs/planilla_merge.py) and the page starts Validar again."""
+    import planilla_v16
+    body = request.get_json(silent=True) or {}
+    company = resolve_company(body.get("selectedId"))
+    code = planilla_v16.APOLLO_MERGE.get(company["token"]) if company else None
+    if not code:
+        return jsonify({"status": "error", "message": "Este cliente no se completa con Apollo"}), 400
+    decisions = body.get("decisions") if isinstance(body.get("decisions"), dict) else {}
+    try:
+        res = planilla_v16.apollo_merge_call(code, str(body.get("folder") or ""), "apply",
+                                             {"decisions": decisions, "usuario": current_user.name})
+    except RuntimeError as e:
+        return jsonify({"status": "error", "message": str(e)}), 502
+    if res.get("status") == "ok":
+        res["lines"] = list(planilla_v16.merge_report_lines(res.get("report") or {}))
+    return jsonify(res)
+
+
 @app.route("/stream-upload")
 @login_required
 def stream_upload():

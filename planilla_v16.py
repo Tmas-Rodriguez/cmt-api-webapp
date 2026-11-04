@@ -23,6 +23,16 @@ Rules (agreed for Alsea on 2026-10-27, impuestos_tasas -> otros on 2026-10-28, h
 - saldo_anterior always empty (carried-over balances: CMT v1.6 would add them to the bruto).
 - datos_opah.csv / opah.csv empty files, as EsgCmt-API's v1.6 exports. Other tables as they are.
 - UTF-8 without BOM, every field quoted, CRLF (also after the last line).
+
+Santander, GP and La Anónima (APOLLO_MERGE) also load invoices in Apollo: once their set is in v1.6
+(Apollo has them in v1.6 too), Apollo adds the ones the Sheet lacks. Anything doubtful (the Sheet
+has that invoice with other values, an overlapping period, an account the Sheet doesn't have, data
+without a column, an outlier...) stops Validar with MergeDecisionNeeded: the page shows each case
+in a popup (add, leave out, fix the Sheet's line in the CSV, fix it in Apollo and merge) and,
+once applied, starts Validar again.
+
+A Sheet exported before Google finished calculating it comes with "Loading..." cells: Validar
+stops instead of converting and validating it.
 """
 import csv
 import os
@@ -61,6 +71,16 @@ PENALTY_NAME = {1: "exceso de potencia", 2: "reactiva", 3: "mora luz", 4: "mora 
 # datos_e columns CMT v1.6 reads but doesn't add to the costo bruto: their amounts go to otros
 HANGING_E = ["impuestos_tasas", "impuestos", "costo_total_consumo"]
 FOLDER_RE = re.compile(r"csv_([a-zA-Z]+)_(\d{8})$")   # the same pattern gera.py looks for
+# what Google Sheets writes in a cell it hadn't finished calculating when the .xlsx was exported
+UNFINISHED_CELLS = {"Loading...", "Cargando..."}
+
+
+class MergeDecisionNeeded(Exception):
+    """Apollo's merge found invoices someone has to decide about (payload: Apollo's analysis)."""
+
+    def __init__(self, payload):
+        super().__init__("El merge con Apollo necesita decisiones")
+        self.payload = payload
 
 
 def fmt(v: float) -> str:
@@ -176,8 +196,9 @@ def convert(src: Path, dst: Path) -> list:
                 tax = (n.pop(c, "") if c == "impuestos_tasas" else n.get(c, "")) or ""
                 if c != "impuestos_tasas":
                     n[c] = ""
-                if tax.strip() and num(tax):
-                    taxes[c] = taxes.get(c, 0) + 1
+                if tax.strip():   # an explicit 0 stays a 0 in otros (as Apollo's own conversion does)
+                    if num(tax):
+                        taxes[c] = taxes.get(c, 0) + 1
                     n["otros"] = fmt(num(n.get("otros", "")) + num(tax)) if n.get("otros", "").strip() else tax
             if n.get("saldo_anterior", "").strip():
                 saldos += 1
@@ -196,7 +217,7 @@ def convert(src: Path, dst: Path) -> list:
     for f in sorted(src.iterdir()):
         # the other tables as they are, and files like Apollo's marker; the .xlsx stays with the original
         if (not f.is_file() or f.stem in V16_HEADERS or f.name in ("datos_opah.csv", "opah.csv")
-                or f.suffix.lower() == ".xlsx" or f.name == "conversion_log.txt"):
+                or f.suffix.lower() == ".xlsx" or f.name in ("conversion_log.txt", ".apollo_merge.json")):
             continue
         shutil.copyfile(f, dst / f.name)
         copied += 1
@@ -240,6 +261,28 @@ def latest_folder(client_dir: Path):
     return found[0][1]
 
 
+def check_export(folder: Path):
+    """Refuse a set exported from Google Sheets before it finished calculating: its cells (even
+    the header) say "Loading...". Raises RuntimeError naming the tables."""
+    bad = []
+    for path in sorted(folder.glob("*.csv")):
+        try:
+            with open(path, encoding="utf-8-sig", newline="") as f:
+                reader = csv.reader(f)
+                header = next(reader, [])
+                cells = sum(1 for row in reader for c in row if c.strip() in UNFINISHED_CELLS)
+        except (OSError, UnicodeDecodeError):
+            continue
+        cells += sum(1 for c in header if c.strip() in UNFINISHED_CELLS)
+        if cells or any(c.startswith("Unnamed: ") for c in header):
+            bad.append(f"{path.stem} ({cells} celdas)" if cells else f"{path.stem} (encabezado roto)")
+    if bad:
+        raise RuntimeError(
+            "Google exportó la planilla sin terminar de calcularla (celdas \"Loading...\" en "
+            + ", ".join(bad[:8]) + (" …" if len(bad) > 8 else "")
+            + "). Abrí la Sheet, esperá a que termine de cargar y volvé a importarla desde Sheets.")
+
+
 def _split_xlsx(folder: Path, esg_repository: Path):
     """An import from Sheets brings only the .xlsx: split it into CSVs with gera's own
     excel_to_csv (gera then sees the CSVs and doesn't split it again). Yields excel_to_csv's
@@ -274,36 +317,62 @@ def _split_xlsx(folder: Path, esg_repository: Path):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
-# Clients whose planilla still comes from Google Sheets but who also load invoices in Apollo: before
-# converting, Apollo adds its own invoices the Sheet doesn't have (the Sheet wins any conflict).
+# Clients whose planilla still comes from Google Sheets but who also load invoices in Apollo: once
+# the set is in v1.6, Apollo adds its own invoices the Sheet doesn't have (the Sheet wins by default;
+# every doubtful case is decided in the merge popup).
 APOLLO_MERGE = {"santander": "SAN", "gp": "GP", "laanonima": "LA"}
 
 
-def _merge_apollo(code: str, folder: Path):
-    """Ask Apollo to add to this v1.5 set the invoices loaded there and missing from the Sheet.
-    Raises (and nothing is validated) if it can't: CMT would get the Sheet without them."""
+def apollo_merge_call(code: str, folder_name: str, step: str, body=None) -> dict:
+    """POST /internal/cmt/merge_apollo/<code>/<analyze|apply> in Apollo; RuntimeError if it can't."""
     import json
     from urllib.parse import quote
     import dentry_client
-    yield "🏛️ Sumando las facturas cargadas en Apollo que la Sheet no tiene..."
     try:
-        r = json.loads(dentry_client.request(f"/internal/cmt/merge_apollo/{code}?folder={quote(folder.name)}",
-                                             scope="merge", method="POST", timeout=300))
+        return json.loads(dentry_client.request(
+            f"/internal/cmt/merge_apollo/{code}/{step}?folder={quote(folder_name)}",
+            scope="merge", method="POST", timeout=300, body=body))
     except (RuntimeError, ValueError) as e:
-        raise RuntimeError(f"Apollo no pudo sumar sus facturas: {e}") from e
-    if r.get("already"):
-        yield "   (ya se habían sumado antes en esta carpeta)"
-    added = r.get("added") or {}
+        raise RuntimeError(f"Apollo no pudo revisar sus facturas: {e}") from e
+
+
+def merge_report_lines(report: dict):
+    added = report.get("added") or {}
     yield (f"   Agregadas: {', '.join(f'{t} {n}' for t, n in added.items())}" if added
-           else "   Apollo no tiene facturas que falten en la Sheet")
-    if r.get("penalties"):
-        yield f"   Multas de esas facturas: {r['penalties']}"
-    for kind, title in (("conflicts", "Ya estaban en la Sheet con otros valores (queda la Sheet)"),
-                        ("skipped", "No se agregaron"), ("dropped_columns", "Datos sin columna en la Sheet")):
-        if r.get(kind):
-            yield f"   ⚠️ {title}: {len(r[kind])}"
-            for line in r[kind][:15]:
-                yield "      " + line
+           else "   No se agregó ninguna factura de Apollo")
+    if report.get("already_in_sheet"):
+        yield f"   Ya estaban en la Sheet tal cual: {report['already_in_sheet']}"
+    for kind, title in (("csv_edits", "Líneas de la Sheet corregidas en el CSV (corregilas también en la Sheet)"),
+                        ("apollo_edits", "Corregidas en Apollo y agregadas"),
+                        ("skipped", "Quitadas del merge"), ("warnings", "Agregadas a pesar de una observación")):
+        items = report.get(kind) or []
+        if items:
+            yield f"   ⚠️ {title}: {len(items)}"
+            for item in items[:15]:
+                yield "      " + (item if isinstance(item, str) else item.get("factura", str(item)))
+
+
+def _merge_apollo(code: str, folder: Path):
+    """Add to this v1.6 set the invoices loaded in Apollo and missing from the Sheet. Raises
+    MergeDecisionNeeded when something has to be decided, RuntimeError when Apollo can't answer
+    (nothing is validated: CMT would get the Sheet without them)."""
+    yield "🏛️ Revisando las facturas cargadas en Apollo que la Sheet no tiene..."
+    r = apollo_merge_call(code, folder.name, "analyze")
+    if r.get("status") != "ok":
+        raise RuntimeError(r.get("message") or "Apollo no pudo revisar sus facturas")
+    if r.get("already"):
+        yield "   Ya se había hecho el merge en esta carpeta:"
+        yield from merge_report_lines(r.get("report") or {})
+        return
+    if r.get("issues"):
+        raise MergeDecisionNeeded({"code": code, "folder": folder.name, "analysis": r})
+    res = apollo_merge_call(code, folder.name, "apply", {"decisions": {}, "usuario": ""})
+    if res.get("status") == "needs_decision":
+        raise MergeDecisionNeeded({"code": code, "folder": folder.name, "analysis": res.get("analysis"),
+                                   "message": res.get("message")})
+    if res.get("status") != "ok":
+        raise RuntimeError(res.get("message") or "Apollo no pudo sumar sus facturas")
+    yield from merge_report_lines(res.get("report") or {})
 
 
 def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
@@ -321,12 +390,16 @@ def prepare_latest(client_token, providers_dir: Path, esg_repository: Path):
     if files and all(f.suffix.lower() == ".xlsx" for f in files):
         yield f"📄 {folder.name}: solo trae el .xlsx, lo paso a CSV (con una planilla grande tarda unos minutos)..."
         yield from _split_xlsx(folder, esg_repository)
+    check_export(folder)
     if not is_v15_set(folder):
         yield f"✅ {folder.name} ya está en v1.6 (o no tiene datos_e en v1.5): se valida tal cual"
-        return
-
+    else:
+        yield from _convert_in_place(folder, client_dir)
     if client_token in APOLLO_MERGE:   # the invoices loaded in Apollo that the Sheet doesn't have
         yield from _merge_apollo(APOLLO_MERGE[client_token], folder)
+
+
+def _convert_in_place(folder: Path, client_dir: Path):
     yield f"🔄 {folder.name} todavía no está en v1.6: la convierto..."
     tmp = client_dir / f".{folder.name}.v16_tmp"
     shutil.rmtree(tmp, ignore_errors=True)
